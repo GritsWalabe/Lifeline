@@ -1,0 +1,375 @@
+// Lifeline server: accounts, timeline storage, photos, share links and the Claude review of Facebook posts.
+import express from "express";
+import pg from "pg";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const PHOTO_DIR = path.join(DATA_DIR, "photos");
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-haiku-5-5";
+const REVIEW_DAILY_LIMIT = +(process.env.REVIEW_DAILY_LIMIT || 50); // batches of up to 60 posts per person per day
+const SESSION_DAYS = 60;
+
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is not set. On Railway, add a Postgres database to the project and reference its DATABASE_URL.");
+  process.exit(1);
+}
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.PGSSL === "1" ? { rejectUnauthorized: false } : undefined,
+  max: 10,
+});
+const q = (text, params) => pool.query(text, params);
+
+async function migrate() {
+  await q(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      pass TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ai_day DATE,
+      ai_count INT NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+    CREATE TABLE IF NOT EXISTS timelines (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      doc JSONB NOT NULL,
+      version INT NOT NULL DEFAULT 1,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      share_token TEXT UNIQUE,
+      share_on BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE TABLE IF NOT EXISTS photos (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      bytes INT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, id)
+    );
+  `);
+}
+
+/* ---------- Helpers ---------- */
+const rid = (n = 16) => crypto.randomBytes(n).toString("base64url");
+const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHOTO_ID_RE = /^p[a-z0-9]{8,40}$/;
+const TOKEN_RE = /^[A-Za-z0-9_-]{10,64}$/;
+
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(pw, salt, 64);
+  return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+function checkPassword(pw, stored) {
+  const [kind, saltHex, hashHex] = String(stored).split("$");
+  if (kind !== "scrypt") return false;
+  const hash = crypto.scryptSync(pw, Buffer.from(saltHex, "hex"), 64);
+  const want = Buffer.from(hashHex, "hex");
+  return want.length === hash.length && crypto.timingSafeEqual(hash, want);
+}
+function parseCookies(req) {
+  const out = {};
+  (req.headers.cookie || "").split(";").forEach((p) => {
+    const i = p.indexOf("=");
+    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+function setSessionCookie(req, res, token, maxAgeSec) {
+  const secure = req.secure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `ll_sid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure}`);
+}
+async function startSession(req, res, userId) {
+  const token = rid(32);
+  await q(`INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '${SESSION_DAYS} days')`, [sha(token), userId]);
+  setSessionCookie(req, res, token, SESSION_DAYS * 86400);
+}
+function userDir(userId) { return path.join(PHOTO_DIR, userId.replace(/[^A-Za-z0-9_-]/g, "")); }
+
+// Simple in-memory limiter for sign-in attempts
+const hits = new Map();
+function limited(key, max, windowMs) {
+  const now = Date.now();
+  const h = (hits.get(key) || []).filter((t) => now - t < windowMs);
+  h.push(now); hits.set(key, h);
+  return h.length > max;
+}
+setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (!v.some((t) => now - t < 3600e3)) hits.delete(k); }, 600e3).unref();
+
+/* ---------- App ---------- */
+const app = express();
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
+
+// Every request that changes data must carry this header. Other sites can't add it without permission,
+// which keeps them from acting on a signed-in person's behalf.
+app.use("/api", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.get("X-Lifeline") !== "1") return res.status(403).json({ error: "Missing request header." });
+  next();
+});
+
+// Who is signed in
+app.use(async (req, res, next) => {
+  req.user = null;
+  const t = parseCookies(req).ll_sid;
+  if (t && t.length < 100) {
+    try {
+      const r = await q(`SELECT u.id, u.email FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, [sha(t)]);
+      if (r.rows[0]) req.user = r.rows[0];
+    } catch (e) { return next(e); }
+  }
+  next();
+});
+const needUser = (req, res, next) => (req.user ? next() : res.status(401).json({ error: "Please sign in." }));
+
+app.get("/healthz", (req, res) => res.send("ok"));
+
+/* ---------- Accounts ---------- */
+app.get("/api/me", (req, res) => {
+  res.json({ user: req.user ? { id: req.user.id, email: req.user.email } : null, ai: !!ANTHROPIC_API_KEY });
+});
+
+app.post("/api/signup", express.json({ limit: "10kb" }), async (req, res) => {
+  if (limited("auth:" + req.ip, 20, 15 * 60e3)) return res.status(429).json({ error: "Too many attempts. Wait a few minutes and try again." });
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  if (!EMAIL_RE.test(email) || email.length > 200) return res.status(400).json({ error: "Enter a valid email address." });
+  if (password.length < 8) return res.status(400).json({ error: "Use a password of at least 8 characters." });
+  if (password.length > 200) return res.status(400).json({ error: "That password is too long." });
+  const id = "u" + rid(12).replace(/[^A-Za-z0-9]/g, "").toLowerCase().slice(0, 14) + crypto.randomInt(1e6);
+  try {
+    await q(`INSERT INTO users(id,email,pass) VALUES($1,$2,$3)`, [id, email, hashPassword(password)]);
+  } catch (e) {
+    if (e.code === "23505") return res.status(409).json({ error: "An account with that email already exists. Sign in instead." });
+    throw e;
+  }
+  await startSession(req, res, id);
+  res.json({ user: { id, email } });
+});
+
+app.post("/api/login", express.json({ limit: "10kb" }), async (req, res) => {
+  if (limited("auth:" + req.ip, 20, 15 * 60e3)) return res.status(429).json({ error: "Too many attempts. Wait a few minutes and try again." });
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const r = await q(`SELECT id, email, pass FROM users WHERE email=$1`, [email]);
+  const u = r.rows[0];
+  if (!u || !checkPassword(password, u.pass)) return res.status(401).json({ error: "That email and password don't match." });
+  await startSession(req, res, u.id);
+  res.json({ user: { id: u.id, email: u.email } });
+});
+
+app.post("/api/logout", async (req, res) => {
+  const t = parseCookies(req).ll_sid;
+  if (t) await q(`DELETE FROM sessions WHERE token_hash=$1`, [sha(t)]);
+  setSessionCookie(req, res, "", 0);
+  res.json({ ok: true });
+});
+
+app.post("/api/password", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const { current, next: nextPw } = req.body || {};
+  const r = await q(`SELECT pass FROM users WHERE id=$1`, [req.user.id]);
+  if (!checkPassword(String(current || ""), r.rows[0].pass)) return res.status(401).json({ error: "Your current password isn't right." });
+  if (String(nextPw || "").length < 8) return res.status(400).json({ error: "Use a new password of at least 8 characters." });
+  await q(`UPDATE users SET pass=$1 WHERE id=$2`, [hashPassword(String(nextPw)), req.user.id]);
+  await q(`DELETE FROM sessions WHERE user_id=$1`, [req.user.id]);
+  await startSession(req, res, req.user.id);
+  res.json({ ok: true });
+});
+
+app.delete("/api/account", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const r = await q(`SELECT pass FROM users WHERE id=$1`, [req.user.id]);
+  if (!checkPassword(String(req.body?.password || ""), r.rows[0].pass)) return res.status(401).json({ error: "That password isn't right." });
+  await q(`DELETE FROM users WHERE id=$1`, [req.user.id]); // sessions, timeline and photo records go with it
+  await fsp.rm(userDir(req.user.id), { recursive: true, force: true });
+  setSessionCookie(req, res, "", 0);
+  res.json({ ok: true });
+});
+
+/* ---------- Timeline ---------- */
+app.get("/api/timeline", needUser, async (req, res) => {
+  const r = await q(`SELECT doc, version, share_token, share_on FROM timelines WHERE user_id=$1`, [req.user.id]);
+  const t = r.rows[0];
+  if (!t) return res.json({ doc: null, version: 0, share: { on: false, token: null } });
+  res.json({ doc: t.doc, version: t.version, share: { on: t.share_on, token: t.share_on ? t.share_token : null } });
+});
+
+// Saves the whole timeline. "version" must match what the page last loaded, so an older copy open
+// on another device can't silently overwrite newer changes.
+app.put("/api/timeline", needUser, express.json({ limit: "25mb" }), async (req, res) => {
+  const { doc, version } = req.body || {};
+  if (!doc || typeof doc !== "object" || !Array.isArray(doc.entries)) return res.status(400).json({ error: "Timeline data is missing." });
+  const clean = { name: String(doc.name || "").slice(0, 200), entries: doc.entries, eras: Array.isArray(doc.eras) ? doc.eras : [] };
+  if (!version) {
+    const r = await q(
+      `INSERT INTO timelines(user_id,doc,version) VALUES($1,$2,1) ON CONFLICT (user_id) DO NOTHING RETURNING version`,
+      [req.user.id, clean]
+    );
+    if (r.rows[0]) return res.json({ version: 1 });
+  } else {
+    const r = await q(
+      `UPDATE timelines SET doc=$2, version=version+1, updated_at=now() WHERE user_id=$1 AND version=$3 RETURNING version`,
+      [req.user.id, clean, version]
+    );
+    if (r.rows[0]) return res.json({ version: r.rows[0].version });
+  }
+  const cur = await q(`SELECT doc, version FROM timelines WHERE user_id=$1`, [req.user.id]);
+  res.status(409).json({ error: "This timeline was changed on another device.", doc: cur.rows[0]?.doc, version: cur.rows[0]?.version });
+});
+
+/* ---------- Photos ---------- */
+app.put("/api/photos/:id", needUser, express.raw({ type: ["image/*"], limit: "15mb" }), async (req, res) => {
+  const id = req.params.id;
+  if (!PHOTO_ID_RE.test(id)) return res.status(400).json({ error: "Bad photo id." });
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the photo as an image." });
+  const mime = String(req.get("content-type") || "").split(";")[0];
+  if (!/^image\/(jpeg|png|gif|webp)$/.test(mime)) return res.status(415).json({ error: "Photos must be JPEG, PNG, GIF or WebP." });
+  const dir = userDir(req.user.id);
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, id), req.body);
+  await q(`INSERT INTO photos(user_id,id,mime,bytes) VALUES($1,$2,$3,$4) ON CONFLICT (user_id,id) DO UPDATE SET mime=$3, bytes=$4`, [req.user.id, id, mime, req.body.length]);
+  res.json({ ok: true });
+});
+
+async function sendPhoto(res, userId, id) {
+  if (!PHOTO_ID_RE.test(id)) return res.status(404).end();
+  const r = await q(`SELECT mime FROM photos WHERE user_id=$1 AND id=$2`, [userId, id]);
+  if (!r.rows[0]) return res.status(404).end();
+  const file = path.join(userDir(userId), id);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.setHeader("Content-Type", r.rows[0].mime);
+  res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+  fs.createReadStream(file).pipe(res);
+}
+app.get("/api/photos/:id", needUser, (req, res, next) => sendPhoto(res, req.user.id, req.params.id).catch(next));
+app.delete("/api/photos/:id", needUser, async (req, res) => {
+  const id = req.params.id;
+  if (!PHOTO_ID_RE.test(id)) return res.status(400).json({ error: "Bad photo id." });
+  await q(`DELETE FROM photos WHERE user_id=$1 AND id=$2`, [req.user.id, id]);
+  await fsp.rm(path.join(userDir(req.user.id), id), { force: true });
+  res.json({ ok: true });
+});
+
+/* ---------- Sharing ---------- */
+app.post("/api/share", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const on = !!req.body?.on, fresh = !!req.body?.newLink;
+  const cur = await q(`SELECT share_token FROM timelines WHERE user_id=$1`, [req.user.id]);
+  if (!cur.rows[0]) return res.status(400).json({ error: "Add something to your timeline before sharing it." });
+  let token = cur.rows[0].share_token;
+  if (on && (!token || fresh)) token = rid(12);
+  await q(`UPDATE timelines SET share_on=$2, share_token=$3 WHERE user_id=$1`, [req.user.id, on, token]);
+  res.json({ on, token: on ? token : null });
+});
+
+async function sharedOwner(token) {
+  if (!TOKEN_RE.test(token)) return null;
+  const r = await q(`SELECT user_id, doc FROM timelines WHERE share_token=$1 AND share_on=true`, [token]);
+  return r.rows[0] || null;
+}
+app.get("/api/shared/:token", async (req, res) => {
+  const t = await sharedOwner(req.params.token);
+  if (!t) return res.status(404).json({ error: "This share link isn't active. Ask the owner for a new one." });
+  // Strip fields only the owner needs
+  const entries = (t.doc.entries || []).map(({ fbts, imp, ...e }) => e);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ doc: { name: t.doc.name, entries, eras: t.doc.eras || [] } });
+});
+app.get("/api/shared/:token/photos/:id", async (req, res, next) => {
+  try {
+    const t = await sharedOwner(req.params.token);
+    if (!t) return res.status(404).end();
+    await sendPhoto(res, t.user_id, req.params.id);
+  } catch (e) { next(e); }
+});
+
+/* ---------- Claude review of Facebook posts ---------- */
+const REVIEW_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook posts.
+For each post below, decide whether it records a real event or milestone in the poster's life that belongs on a personal life timeline.
+
+KEEP posts about things that actually happened to the poster or their close family and friends, for example: births, weddings, engagements, anniversaries, graduations, first days, new jobs, promotions, retirements, moves and new homes, trips and vacations, concerts, games, shows or festivals they attended (especially with family), reunions, achievements and awards, races or sports milestones, a new pet, a first car, a serious illness or recovery, the death of a loved one, a holiday or birthday with specific detail about what they did.
+SKIP posts that are not events: opinions, jokes, memes, quotes, song or movie or sports commentary not tied to attending something, shared news or links, political posts, generic greetings ("happy Friday"), contests, sales or ads, vague moods, profile picture changes with no story.
+Example: "This is my favorite rock song of all time" -> skip. "Saw Foo Fighters tonight with my son, his first concert!" -> keep, title "Took my son to his first concert: Foo Fighters".
+
+Return ONLY a JSON array with one object per post, in the same order, each:
+{"id": <the post's id>, "keep": true|false, "score": 0-10 (how significant this is for the person's life story), "title": "short timeline title, past tense, under 60 characters, written as the event", "category": one of "milestone","family","education","work","home","travel","other", "reason": "under 12 words"}
+
+Posts:
+`;
+app.post("/api/review", needUser, express.json({ limit: "200kb" }), async (req, res) => {
+  if (!ANTHROPIC_API_KEY) return res.status(503).json({ code: "not_configured", error: "Claude review isn't set up on this site." });
+  const posts = Array.isArray(req.body?.posts) ? req.body.posts.slice(0, 60) : [];
+  if (!posts.length) return res.status(400).json({ error: "No posts to review." });
+  // Daily allowance per person, so one large import can't run up an unexpected bill
+  const used = await q(
+    `UPDATE users SET ai_count = CASE WHEN ai_day = CURRENT_DATE THEN ai_count + 1 ELSE 1 END, ai_day = CURRENT_DATE
+     WHERE id=$1 RETURNING ai_count`, [req.user.id]);
+  if (used.rows[0].ai_count > REVIEW_DAILY_LIMIT) {
+    return res.status(429).json({ code: "daily_limit", error: "You've reached today's limit for Claude reviews." });
+  }
+  const lines = posts.map((p, i) => JSON.stringify({
+    id: i + 1,
+    date: String(p.date || "").slice(0, 10),
+    text: String(p.text || "").slice(0, 500),
+    photos: p.photos ? Math.min(+p.photos || 0, 50) : undefined,
+    place: p.place ? String(p.place).slice(0, 100) : undefined,
+    facebook_label: p.label ? String(p.label).slice(0, 200) : undefined,
+  })).join("\n");
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 8000, messages: [{ role: "user", content: REVIEW_PROMPT + lines }] }),
+      signal: AbortSignal.timeout(120e3),
+    });
+    if (r.status === 429 || r.status === 529) return res.status(503).json({ code: "busy", error: "Claude is busy right now. Try again in a few minutes." });
+    if (!r.ok) { console.error("Claude API error", r.status, (await r.text()).slice(0, 500)); return res.status(502).json({ code: "upstream", error: "Claude couldn't review this batch." }); }
+    const data = await r.json();
+    const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+    const m = text.match(/\[[\s\S]*\]/);
+    let results = [];
+    try { results = m ? JSON.parse(m[0]) : []; } catch { results = []; }
+    res.json({ results: Array.isArray(results) ? results : [] });
+  } catch (e) {
+    console.error("Claude request failed", e.message);
+    res.status(502).json({ code: "upstream", error: "Claude couldn't review this batch." });
+  }
+});
+
+/* ---------- Pages ---------- */
+const sendPage = (file) => (req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "public", file));
+};
+app.get("/", sendPage("index.html"));
+app.get("/s/:token", sendPage("index.html"));
+app.get("/privacy", sendPage("privacy.html"));
+app.use(express.static(path.join(__dirname, "public"), { index: false, maxAge: "1h" }));
+
+app.use((err, req, res, next) => {
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "That's too large to save in one go." });
+  console.error(err);
+  res.status(500).json({ error: "Something went wrong on the server. Try again." });
+});
+
+await fsp.mkdir(PHOTO_DIR, { recursive: true });
+await migrate();
+app.listen(PORT, () => console.log(`Lifeline running on port ${PORT}. Photos are stored in ${PHOTO_DIR}.`));

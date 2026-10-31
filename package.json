@@ -1,0 +1,13 @@
+{
+  "name": "lifeline",
+  "version": "1.0.0",
+  "description": "Build a timeline of a life from a form, a spreadsheet or a Facebook download.",
+  "main": "server.js",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "5.1.0",
+    "pg": "8.13.1"
+  }
+}

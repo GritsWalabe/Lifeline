@@ -1,0 +1,2071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lifeline</title>
+<meta name="description" content="Build a timeline of a life from a simple form, a spreadsheet or your Facebook posts, and share it with family.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</body>
+</html>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+/* Layout: a full-width horizontal track is the page. Time runs left to right on one axis; events hang above and below it like survey markers and swell as you pass over them. Input lives in a side drawer. */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --ink:#18212B; --muted:#5B6878; --line:#D5DCE4; --stripe:#EBEEF2;
+  --accent:#0E6B70; --accent-ink:#FFFFFF; --accent-soft:#DCEFEF; --danger:#B3261E; --warn:#8A5A00; --scrim:rgba(17,24,33,.42);
+  --c-milestone:#C2590A; --c-family:#B1306B; --c-education:#2F5FB3; --c-work:#0E6B70; --c-home:#6B5A1E; --c-travel:#3B7F2E; --c-post:#4A55C9; --c-other:#6B7684;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161C; --surface:#19212A; --ink:#E6EBF0; --muted:#97A3B1; --line:#2C3743; --stripe:#151B22;
+  --accent:#4FB8BC; --accent-ink:#0B1A1B; --accent-soft:#163538; --danger:#F2867E; --warn:#E3B45C; --scrim:rgba(0,0,0,.6);
+  --c-milestone:#F0964C; --c-family:#E57AAA; --c-education:#7FA6EE; --c-work:#4FB8BC; --c-home:#C9B45E; --c-travel:#7FC56E; --c-post:#9AA2F5; --c-other:#9AA4B0;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11161C; --surface:#19212A; --ink:#E6EBF0; --muted:#97A3B1; --line:#2C3743; --stripe:#151B22;
+  --accent:#4FB8BC; --accent-ink:#0B1A1B; --accent-soft:#163538; --danger:#F2867E; --warn:#E3B45C; --scrim:rgba(0,0,0,.6);
+  --c-milestone:#F0964C; --c-family:#E57AAA; --c-education:#7FA6EE; --c-work:#4FB8BC; --c-home:#C9B45E; --c-travel:#7FC56E; --c-post:#9AA2F5; --c-other:#9AA4B0;
+  color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55}
+.wrap{max-width:1280px;margin:0 auto;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 32px;padding-block:24px 16px}
+.brand{font-family:var(--f-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.who{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 320px}
+#personName{font-family:var(--f-display);font-weight:700;font-size:clamp(28px,5vw,44px);line-height:1.1;border:0;background:transparent;padding:2px 0;width:100%;border-bottom:2px dashed transparent}
+#personName:hover,#personName:focus{border-bottom-color:var(--line);outline:none}
+.right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.stats{display:flex;gap:24px;font-variant-numeric:tabular-nums}
+.stat b{display:block;font-family:var(--f-display);font-size:24px;font-weight:700;line-height:1.1}
+.stat span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 10px;background:var(--surface);cursor:help}
+.status i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.status[data-s="cloud"] i{background:var(--c-travel)}
+.status[data-s="busy"] i{background:var(--accent);animation:pulse 1s infinite alternate}
+.status[data-s="err"]{color:var(--danger);border-color:var(--danger)} .status[data-s="err"] i{background:var(--danger)}
+.status[data-s="local"] i{background:var(--warn)}
+@keyframes pulse{to{opacity:.3}}
+
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-block:4px 10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:7px 12px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px 3px 8px;font-size:13px;cursor:pointer}
+.chip i{width:9px;height:9px;border-radius:50%;background:var(--cc)}
+.chip[aria-pressed="false"]{opacity:.45}
+.chip .n{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.banner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;border:1px dashed var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:14px}
+
+input[type=text],input[type=number],input[type=email],input[type=password],select,textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px 10px;font-size:15px;color:var(--ink)}
+.toolbar input[type=text]{flex:1 1 180px;min-width:0;width:auto;background:var(--surface)}
+textarea{min-height:80px;resize:vertical}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 14px;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--danger)}
+.btn.armed{background:var(--danger);border-color:var(--danger);color:var(--surface)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:4px 10px;font-size:13px}
+
+.zoombar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding-block:0 8px;font-size:13px;color:var(--muted)}
+.zoombar input[type=range]{width:160px;accent-color:var(--accent)}
+.zoombar .hint{flex:1 1 220px;text-align:right}
+
+/* The track */
+.track-wrap{position:relative;overflow-x:auto;overflow-y:hidden;border-block:1px solid var(--line);cursor:grab;scrollbar-width:thin;overscroll-behavior-x:contain}
+.track-wrap.dragging{cursor:grabbing;user-select:none}
+.track{position:relative}
+.stripe{position:absolute;top:0;bottom:0;background:var(--stripe)}
+.axis{position:absolute;left:0;right:0;height:2px;background:var(--ink);opacity:.8}
+.tk{position:absolute;width:1px;height:10px;background:var(--ink);opacity:.5;transform:translate(-50%,-50%)}
+.tk.m{height:6px;opacity:.3}
+.ml{position:absolute;font-family:var(--f-mono);font-size:10px;color:var(--muted);transform:translateX(-50%)}
+.yl{position:absolute;transform:translate(-50%,-50%);font-family:var(--f-display);font-weight:700;font-size:14px;line-height:1;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:4px 9px;white-space:nowrap;z-index:2;font-variant-numeric:tabular-nums;pointer-events:none}
+.yl.dec{font-size:17px;border-color:var(--ink)}
+.yl small{font-family:var(--f-mono);font-weight:500;font-size:10px;color:var(--muted);margin-left:5px}
+.stem{position:absolute;width:1px;background:var(--cc);opacity:.55;transform:translateX(-.5px)}
+.pin{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--cc);transform:translate(-50%,-50%);box-shadow:0 0 0 2px var(--bg);z-index:3;pointer-events:none}
+.dot{position:absolute;width:18px;height:18px;padding:0;border:0;background:transparent;cursor:pointer;transform:translate(-50%,-50%) scale(var(--s,1));transition:transform .12s ease-out;z-index:4}
+.dot::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--cc);box-shadow:0 0 0 2px var(--bg)}
+.tc{position:absolute;display:flex;flex-direction:column;padding:0;border:1px solid var(--line);background:var(--surface);border-radius:8px;overflow:hidden;text-align:left;cursor:pointer;
+  transform:scale(var(--s,1));transition:transform .12s ease-out, box-shadow .12s;z-index:5;will-change:transform}
+.tc.up{transform-origin:50% 100%} .tc.down{transform-origin:50% 0}
+.tc:hover,.tc:focus-visible{box-shadow:0 6px 20px rgba(10,16,24,.18)}
+.tc img{width:100%;height:56px;object-fit:cover;display:block;background:var(--line);flex:none}
+.tc .tb{display:flex;flex-direction:column;gap:2px;padding:6px 9px 8px;min-height:0}
+.tc .tm{display:flex;align-items:center;gap:5px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.tc .tm i{width:7px;height:7px;border-radius:50%;background:var(--cc);flex:none}
+.tc .tt{font-family:var(--f-display);font-weight:500;font-size:13.5px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.tc.hasimg .tt{-webkit-line-clamp:2}
+/* Eras: shaded spans behind the events, with their names in a band across the top */
+.era-band{position:absolute;bottom:0;z-index:1;pointer-events:none;background:var(--ec);opacity:.16;border-left:2px solid var(--ec);border-right:2px solid var(--ec)}
+.era-band.open{border-right:0}
+.era-lab{position:absolute;z-index:8;height:22px;display:flex;align-items:center;gap:6px;padding:0 8px;border:0;border-radius:4px;background:var(--ec);color:var(--et);
+  font-family:var(--f-display);font-weight:700;font-size:12.5px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;cursor:pointer;text-align:left}
+.era-lab span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.era-lab small{font-family:var(--f-mono);font-weight:500;font-size:10px;opacity:.8;flex:none}
+.era-lab:hover{filter:brightness(1.08)}
+.ov-era{position:absolute;top:0;bottom:0;opacity:.28;pointer-events:none}
+.chip.era i{border-radius:2px;width:12px}
+.chip-sep{width:1px;background:var(--line);margin-inline:4px;align-self:stretch}
+.year .eras{display:flex;flex-wrap:wrap;gap:4px}
+.etag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;border-radius:4px;padding:1px 7px;background:var(--ec);color:var(--et)}
+/* Era editor */
+.swatches{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sw{width:30px;height:30px;border-radius:6px;border:2px solid transparent;background:var(--sc);cursor:pointer;padding:0}
+.sw[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 2px var(--surface) inset}
+.swatches input[type=color]{width:38px;height:30px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);cursor:pointer}
+.era-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px}
+.era-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line)}
+.era-row:last-child{border-bottom:0}
+.era-row i{width:14px;height:14px;border-radius:3px;background:var(--ec)}
+.era-row b{font-family:var(--f-display);font-weight:500;display:block;overflow-wrap:anywhere}
+.era-row .d{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.track-empty{padding:48px 20px;text-align:center;color:var(--muted)}
+.track-empty h3{font-family:var(--f-display);color:var(--ink);margin:0 0 6px;font-size:20px}
+@media (prefers-reduced-motion:reduce){.tc,.dot{transition:none}}
+
+.overview{position:relative;height:38px;margin-block:10px 24px;border:1px solid var(--line);border-radius:6px;background:var(--surface);cursor:pointer;overflow:hidden;touch-action:none}
+.ov-bar{position:absolute;bottom:0;background:var(--muted);opacity:.35}
+.ov-win{position:absolute;top:0;bottom:0;border:2px solid var(--accent);background:var(--accent-soft);opacity:.55;border-radius:4px;pointer-events:none}
+.ov-lab{position:absolute;top:2px;font-family:var(--f-mono);font-size:10px;color:var(--muted);transform:translateX(-50%);pointer-events:none}
+
+/* List view */
+.listview{padding-block:12px 64px}
+.spine{position:relative;padding-left:34px;max-width:780px}
+.spine::before{content:"";position:absolute;left:10px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.year{position:relative;display:flex;align-items:baseline;gap:12px;margin:28px 0 12px}
+.year:first-child{margin-top:0}
+.year::before{content:"";position:absolute;left:-30px;top:50%;width:14px;height:14px;margin-top:-7px;background:var(--bg);border:2px solid var(--ink);transform:rotate(45deg)}
+.year h3{font-family:var(--f-display);font-weight:700;font-size:32px;line-height:1;margin:0;font-variant-numeric:tabular-nums}
+.year .age{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.ev{position:relative;display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px;cursor:pointer}
+.ev:hover{border-color:var(--muted)}
+.ev::before{content:"";position:absolute;left:-29px;top:18px;width:10px;height:10px;border-radius:50%;background:var(--cc);box-shadow:0 0 0 3px var(--bg)}
+.ev .meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--muted)}
+.ev .date{font-family:var(--f-mono);color:var(--ink)}
+.ev .cat{color:var(--cc);font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+.ev h4{font-family:var(--f-display);font-weight:500;font-size:18px;line-height:1.3;margin:4px 0 2px;overflow-wrap:anywhere}
+.ev p{margin:4px 0 0;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .strip{margin-top:8px}
+.src{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px}
+
+.strip{display:flex;flex-wrap:wrap;gap:6px}
+.strip:empty{display:none}
+.strip figure,.strip .sq{position:relative;margin:0;width:64px;height:64px;border-radius:6px;overflow:hidden;background:var(--line);flex:none}
+.strip img{width:100%;height:100%;object-fit:cover;display:block}
+.strip button.x{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;border:0;background:rgba(10,14,20,.7);color:#fff;font-size:14px;line-height:1;cursor:pointer}
+
+.back{position:fixed;inset:0;background:var(--scrim);z-index:40;display:flex}
+body.locked{overflow:hidden}
+
+/* Detail sheet */
+#detail{align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.sheet{background:var(--surface);border-radius:12px;width:min(1040px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.3)}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.sheet-head .nav{display:flex;gap:6px}
+.sheet-main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);min-height:0;overflow:auto}
+.sheet-main.noimg{grid-template-columns:minmax(0,1fr)}
+@media (max-width:760px){.sheet-main{grid-template-columns:minmax(0,1fr)}}
+.sheet-media{background:#0B0F14;display:flex;flex-direction:column;gap:8px;padding:12px;min-width:0}
+.sheet-media .big{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;width:100%}
+.sheet-media .big img{width:100%;max-height:62vh;object-fit:contain;display:block}
+.sheet-media .strip button{border:0;padding:0;cursor:pointer;background:transparent;width:56px;height:56px;border-radius:6px;overflow:hidden;opacity:.6}
+.sheet-media .strip button[aria-current="true"]{opacity:1;outline:2px solid #fff;outline-offset:1px}
+.sheet-body{padding:22px 24px 26px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.sheet-body .yr{font-family:var(--f-display);font-weight:700;font-size:56px;line-height:.9;color:var(--cc);font-variant-numeric:tabular-nums}
+.sheet-body .when{font-family:var(--f-mono);font-size:13px;color:var(--muted)}
+.sheet-body h2{font-family:var(--f-display);font-weight:500;font-size:26px;line-height:1.2;margin:4px 0;text-wrap:balance;overflow-wrap:anywhere}
+.sheet-body .tags{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:13px;color:var(--muted);align-items:center}
+.sheet-body .tags .cat{color:var(--cc);font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+.sheet-body p{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;max-width:62ch}
+.sheet-foot{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;border-top:1px solid var(--line);justify-content:flex-end}
+
+/* Drawer */
+#drawer{justify-content:flex-end}
+.drawer{background:var(--surface);width:min(560px,100%);height:100%;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.2);
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+.drawer-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px 6px}
+.drawer-head h2{font-family:var(--f-display);font-size:22px;margin:0}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--line);padding-inline:8px}
+.tabs button{border:0;background:transparent;padding:10px 2px;font-size:12.5px;line-height:1.2;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.drawer-body{flex:1;overflow:auto;min-height:0}
+.pane{padding:18px;display:flex;flex-direction:column;gap:14px}
+.pane h3{font-family:var(--f-display);font-size:18px;font-weight:700;margin:0}
+.pane p{margin:0;color:var(--muted);font-size:14px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.sublabel{font-family:var(--f-display);font-weight:700;font-size:14px;margin-bottom:-6px}
+/* Duration bar for events that span days */
+.span-bar{position:absolute;height:8px;border-radius:4px;background:var(--cc);opacity:.85;transform:translateY(-50%);z-index:3;pointer-events:none;box-shadow:0 0 0 2px var(--bg)}
+.row3{display:grid;grid-template-columns:1.1fr 1.4fr .9fr;gap:8px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.hint{font-size:13px;color:var(--muted)}
+.msg{font-size:14px;padding:8px 10px;border-radius:6px;background:var(--accent-soft);color:var(--ink)}
+.msg.err{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:20px 14px;text-align:center;cursor:pointer;color:var(--muted);font-size:14px;text-transform:none;letter-spacing:0;font-weight:400}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop strong{color:var(--ink)}
+.drop input{display:none}
+input[type=file].plain{font-size:13px;color:var(--ink);border:0;padding:0;background:transparent}
+.map{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.preview{border:1px solid var(--line);border-radius:6px;max-height:220px;overflow:auto;font-size:13px}
+.preview div{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:10px}
+.preview div:last-child{border-bottom:0}
+.preview .d{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap;min-width:84px}
+.preview .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview .bad .d{color:var(--danger)}
+ol.steps{margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.check{flex-direction:row;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:14px;font-weight:400;color:var(--ink)}
+code{font-family:var(--f-mono);font-size:12px;background:var(--bg);padding:1px 4px;border-radius:3px}
+.progress{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.progress i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.stack{display:flex;flex-direction:column;gap:12px}
+.card.resume{border-color:var(--accent);background:var(--accent-soft)}
+.card{border:1px solid var(--line);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px}
+
+.rv-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.rv-head h4{margin:0;font-family:var(--f-display);font-size:16px}
+.rv-list{border:1px solid var(--line);border-radius:8px;max-height:46vh;overflow:auto}
+.rv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink);font-size:14px}
+.rv:last-child{border-bottom:0}
+.rv input{margin-top:4px;accent-color:var(--accent);width:16px;height:16px}
+.rv > span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rv .top{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.rv .d{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.rv b{font-family:var(--f-display);font-weight:500;font-size:15px;overflow-wrap:anywhere}
+.rv .score{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
+.rv .txt{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.rv .why{font-size:12px;color:var(--accent);font-style:italic}
+details.left summary{cursor:pointer;font-weight:600;font-size:14px;padding-block:4px}
+.sticky-foot{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 18px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* Photo viewer: deliberately always dark, like a projection screen */
+.lb{position:fixed;inset:0;z-index:60;background:#07090C;color:#E9EDF2;display:grid;grid-template-rows:auto minmax(0,1fr) auto;
+  padding:env(safe-area-inset-top,0px) max(12px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(12px,env(safe-area-inset-left,0px))}
+.lb-top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:10px}
+.lb-top .count{font-family:var(--f-mono);font-size:12px;color:#9AA6B4}
+.lb-top .ctl{display:flex;gap:6px}
+.lb button.ic{border:1px solid #2C3540;background:#11161C;color:#E9EDF2;border-radius:6px;padding:6px 12px;font-size:14px;font-weight:600;cursor:pointer}
+.lb-stage{position:relative;display:grid;place-items:center;min-height:0}
+.lb-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:64px;border:0;background:rgba(17,22,28,.6);color:#fff;font-size:28px;cursor:pointer;border-radius:6px}
+.lb-nav.prev{left:0}.lb-nav.next{right:0}
+.lb-cap{padding-block:12px 16px;max-width:760px;margin:0 auto;width:100%;text-align:center}
+.lb-cap .y{font-family:var(--f-display);font-size:28px;font-weight:700;line-height:1}
+.lb-cap .d{font-family:var(--f-mono);font-size:12px;color:#9AA6B4;margin-top:4px}
+.lb-cap .t{font-family:var(--f-display);font-size:17px;margin-top:4px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:6px;font-size:14px;z-index:70;max-width:calc(100% - 32px)}
+/* Standalone-site additions */
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh}
+img{max-width:100%}
+.auth-card{background:var(--surface);border-radius:12px;width:min(420px,100%);padding:24px;display:flex;flex-direction:column;gap:14px;box-shadow:0 24px 64px rgba(0,0,0,.3);margin:auto}
+.auth-card h2{font-family:var(--f-display);font-size:26px;margin:0;line-height:1.15}
+.auth-card p{margin:0;color:var(--muted);font-size:14px}
+.auth-card input{text-transform:none;letter-spacing:0;font-weight:400}
+.auth-switch{border:0;background:transparent;color:var(--accent);font-weight:600;cursor:pointer;padding:0;text-decoration:underline}
+#auth{padding:16px;overflow:auto}
+.share-url{display:flex;gap:6px}
+.share-url input{flex:1;min-width:0;font-family:var(--f-mono);font-size:13px}
+body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
+body.readonly #personName{pointer-events:none}
+.foot{padding-block:24px 40px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
+.foot a{color:var(--muted)}
+.hint a,.auth-card a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="who">
+      <span class="brand">Lifeline · timeline of</span>
+      <input id="personName" type="text" aria-label="Person's name" placeholder="Whose timeline is this?">
+    </div>
+    <div class="right">
+      <div class="stats">
+        <div class="stat"><b id="stCount">0</b><span>Events</span></div>
+        <div class="stat"><b id="stSpan">–</b><span>Years covered</span></div>
+      </div>
+      <span class="status" id="status" data-s="busy" title=""><i></i><span id="statusText">Looking for your saved timeline</span></span>
+    </div>
+  </header>
+
+  <div class="banner" id="sharedBanner" hidden>
+    <span id="sharedText">You're looking at a shared timeline. It's view only.</span>
+    <a class="btn" href="/">Make your own timeline</a>
+  </div>
+
+  <div class="banner" id="sampleBanner" hidden>
+    <span id="sampleText">These are example events so you can see how it works. Nothing is saved until you add your own.</span>
+    <button class="btn" id="clearSample">Clear examples and start mine</button>
+  </div>
+
+  <div class="banner" id="importBanner" hidden>
+    <span id="importBannerText"></span>
+    <button class="btn primary" id="importBannerGo">Continue import</button>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn primary" id="openDrawer">Add &amp; import</button>
+    <div class="seg" role="group" aria-label="View">
+      <button id="vTrack" aria-pressed="true">Timeline</button>
+      <button id="vList" aria-pressed="false">List</button>
+    </div>
+    <input type="text" id="search" placeholder="Search events" aria-label="Search events">
+    <button class="btn" id="slideshow">Photo slideshow</button>
+    <button class="btn" id="shareBtn">Share</button>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="zoombar" id="zoombar">
+    <span>Zoom</span>
+    <button class="btn sm" id="zOut" aria-label="Zoom out">−</button>
+    <input type="range" id="zRange" min="0" max="1000" value="500" aria-label="Zoom level">
+    <button class="btn sm" id="zIn" aria-label="Zoom in">+</button>
+    <button class="btn sm" id="zFit">Whole life</button>
+    <span class="hint" id="zHint">Drag or scroll sideways. Events grow as you pass over them.</span>
+  </div>
+</div>
+
+<section id="trackView">
+  <div class="track-wrap" id="trackWrap" tabindex="0" aria-label="Timeline track. Use the arrow keys to scroll.">
+    <div class="track" id="track"></div>
+    <div class="track-empty" id="trackEmpty" hidden><h3>No events to show</h3>Add your first event with Add &amp; import, or turn categories back on.</div>
+  </div>
+  <div class="wrap"><div class="overview" id="overview" aria-hidden="true"></div></div>
+</section>
+
+<section class="wrap listview" id="listView" hidden><div id="timeline"></div></section>
+<footer class="wrap foot"><span>Lifeline</span><a href="/privacy">Privacy</a></footer>
+
+<div class="back" id="detail" hidden>
+  <article class="sheet" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+    <div class="sheet-head">
+      <div class="nav"><button class="btn sm" id="dPrev">‹ Earlier</button><button class="btn sm" id="dNext">Later ›</button></div>
+      <span class="hint" id="dPos"></span>
+      <button class="btn sm" id="dClose">Close</button>
+    </div>
+    <div class="sheet-main" id="dMain">
+      <div class="sheet-media" id="dMedia"></div>
+      <div class="sheet-body" id="dBody"></div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn" id="dEdit">Edit</button>
+      <button class="btn danger" id="dDel">Delete</button>
+    </div>
+  </article>
+</div>
+
+<div class="back" id="drawer" hidden>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drTitle">
+    <div class="drawer-head"><h2 id="drTitle">Add to the timeline</h2><button class="btn sm" id="drClose">Close</button></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-pane="add">Add event</button>
+      <button role="tab" aria-selected="false" data-pane="eras">Eras</button>
+      <button role="tab" aria-selected="false" data-pane="sheet">Spreadsheet</button>
+      <button role="tab" aria-selected="false" data-pane="fb">Facebook</button>
+      <button role="tab" aria-selected="false" data-pane="data">Share &amp; account</button>
+    </div>
+    <div class="drawer-body">
+
+      <form class="pane" id="pane-add" autocomplete="off">
+        <h3 id="formTitle">Add an event</h3>
+        <span class="sublabel">Start date</span>
+        <div class="row3">
+          <label>Year<input type="number" id="fYear" min="1800" max="2200" placeholder="2005" required></label>
+          <label>Month<select id="fMonth"><option value="">—</option></select></label>
+          <label>Day<input type="number" id="fDay" min="1" max="31" placeholder="—"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="fMulti"> Lasted more than one day, like a vacation</label>
+        <div id="fEndWrap" hidden class="stack">
+          <span class="sublabel">End date</span>
+          <div class="row3">
+            <label>Year<input type="number" id="fEYear" min="1800" max="2200" placeholder="Same year"></label>
+            <label>Month<select id="fEMonth"><option value="">—</option></select></label>
+            <label>Day<input type="number" id="fEDay" min="1" max="31" placeholder="—"></label>
+          </div>
+          <p class="hint" id="fDur"></p>
+        </div>
+        <p class="hint">Only the start year is required. Leave month or day blank when you aren't sure.</p>
+        <label>What happened<input type="text" id="fTitle" placeholder="Took Ethan to his first concert" required></label>
+        <div class="row2">
+          <label>Category<select id="fCat"></select></label>
+          <label>Place<input type="text" id="fPlace" placeholder="Dallas, TX"></label>
+        </div>
+        <label>Details<textarea id="fDesc" placeholder="Anything worth remembering about it"></textarea></label>
+        <label>Photos<input type="file" class="plain" id="fPhotos" accept="image/*" multiple></label>
+        <div class="strip" id="fStrip"></div>
+        <div id="formMsg" hidden></div>
+        <div class="btns">
+          <button class="btn primary" type="submit" id="fSubmit">Add to timeline</button>
+          <button class="btn" type="button" id="fCancel" hidden>Cancel edit</button>
+        </div>
+      </form>
+
+      <form class="pane" id="pane-eras" hidden autocomplete="off">
+        <h3 id="eraFormTitle">Add an era</h3>
+        <p>An era is a stretch of your life, like college, a job, or the years in a house. It shades that whole span of the timeline in the color you pick.</p>
+        <label>Name<input type="text" id="eName" placeholder="Texas Tech" required maxlength="60"></label>
+        <div class="row2">
+          <label>Start year<input type="number" id="eSY" min="1800" max="2200" placeholder="2002" required></label>
+          <label>Start month<select id="eSM"><option value="">—</option></select></label>
+        </div>
+        <div class="row2">
+          <label>End year<input type="number" id="eEY" min="1800" max="2200" placeholder="Still going"></label>
+          <label>End month<select id="eEM"><option value="">—</option></select></label>
+        </div>
+        <p class="hint">Leave the end year blank for an era that's still going.</p>
+        <label>Color</label>
+        <div class="swatches" id="eSwatches"></div>
+        <div id="eraMsg" hidden></div>
+        <div class="btns">
+          <button class="btn primary" type="submit" id="eSubmit">Add era</button>
+          <button class="btn" type="button" id="eCancel" hidden>Cancel edit</button>
+        </div>
+        <h3 style="margin-top:8px">Your eras</h3>
+        <div class="era-list" id="eraList"></div>
+      </form>
+
+      <div class="pane" id="pane-sheet" hidden>
+        <h3>Upload a spreadsheet</h3>
+        <p>Excel (.xlsx, .xls) or CSV. One row per event, with a header row. Columns are matched automatically and you can change the matching below.</p>
+        <label class="drop" id="sheetDrop"><input type="file" id="sheetFile" accept=".xlsx,.xls,.csv,.tsv,.ods"><span><strong>Choose a file</strong> or drop it here</span></label>
+        <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code>. Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
+        <div id="sheetResult" class="stack" hidden>
+          <div class="map" id="sheetMap"></div>
+          <div class="preview" id="sheetPreview"></div>
+          <div id="sheetMsg" class="hint"></div>
+          <button class="btn primary" id="sheetImport">Add rows</button>
+        </div>
+      </div>
+
+      <div id="pane-fb" hidden>
+        <div class="pane">
+          <h3>Import Facebook posts</h3>
+          <div class="card resume" id="fbResume" hidden>
+            <h3>Pick up where you left off</h3>
+            <p id="resumeText"></p>
+            <div class="btns"><button class="btn primary" id="resumeGo">Continue import</button><button class="btn danger" id="resumeDiscard">Discard this import</button></div>
+          </div>
+          <div class="card" id="fbHow">
+            <p>Facebook doesn't let apps read posts directly, so use Facebook's own download:</p>
+            <ol class="steps">
+              <li>On Facebook, open <b>Settings → Accounts Center → Your information and permissions → Download your information</b>.</li>
+              <li>Choose the profile, then <b>Specific types of information → Posts</b>.</li>
+              <li>Set <b>Format: JSON</b>, <b>Date range: All time</b>, <b>Media quality: High</b>.</li>
+              <li>When Facebook emails you, download the .zip and drop the whole .zip below.</li>
+            </ol>
+          </div>
+          <label class="drop" id="fbDrop"><input type="file" id="fbFile" accept=".zip,.json" multiple><span><strong>Choose the Facebook .zip</strong> or drop it here. If Facebook split your download into several .zip files, choose them all together.</span></label>
+          <p class="hint">The file is read in your browser. Only post text is sent to Claude for review, never photos.</p>
+          <div id="fbMsg" class="hint"></div>
+          <div class="card" id="fixCard" hidden>
+            <h3>Find missing photos</h3>
+            <p id="fixText"></p>
+            <label class="drop" id="fixDrop"><input type="file" id="fixFile" accept=".zip" multiple><span><strong>Choose your Facebook .zip files</strong> or drop them here. Include every part if Facebook split the download.</span></label>
+            <div id="fixMsg" class="hint"></div>
+            <div class="progress" id="fixProg" hidden><i></i></div>
+            <div class="btns"><button class="btn primary" id="fixGo" hidden>Attach photos</button><button class="btn" id="fixStop" hidden>Stop for now</button></div>
+          </div>
+        </div>
+
+        <div id="fbSetup" class="pane" hidden style="padding-top:0">
+          <div class="row2">
+            <label>From year<input type="number" id="fbFrom"></label>
+            <label>To year<input type="number" id="fbTo"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="fbPhotos" checked> Include photos</label>
+          <div class="card">
+            <h3>Pick out the life events</h3>
+            <p id="aiIntro"></p>
+            <div class="btns">
+              <button class="btn primary" id="aiRun">Find life events with Claude</button>
+              <button class="btn" id="kwRun">Quick keyword check</button>
+              <button class="btn" id="allRun">Review every post myself</button>
+            </div>
+            <div id="aiProg" class="stack" hidden>
+              <div class="progress"><i id="aiBar"></i></div>
+              <div class="btns"><span class="hint" id="aiText"></span><button class="btn sm" id="aiStop">Stop</button><button class="btn sm primary" id="aiMore" hidden>Continue</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="fbReview" class="pane" hidden style="padding-top:0">
+          <div class="rv-head"><h4 id="rvKeepH"></h4><span class="btns"><button class="btn sm" data-sel="keep:1">All</button><button class="btn sm" data-sel="keep:0">None</button></span></div>
+          <div class="rv-list" id="rvKeep"></div>
+          <details class="left" id="rvLeftWrap">
+            <summary id="rvLeftH"></summary>
+            <div class="rv-head" style="margin-block:6px"><span class="hint">Tick any you want after all.</span><span class="btns"><button class="btn sm" data-sel="left:1">All</button><button class="btn sm" data-sel="left:0">None</button></span></div>
+            <div class="rv-list" id="rvLeft"></div>
+          </details>
+        </div>
+        <div class="sticky-foot" id="fbFoot" hidden>
+          <div class="progress" id="fbProg" hidden style="flex-basis:100%"><i></i></div>
+          <button class="btn primary" id="fbImport">Add selected</button>
+          <button class="btn" id="fbStop" hidden>Stop for now</button>
+          <span class="hint" id="fbFootMsg" style="flex:1 1 160px"></span>
+          <button class="btn sm" id="fbDone" title="Clears the saved progress for this download">Finish import</button>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-data" hidden>
+        <div class="card" id="shareCard">
+          <h3>Share your timeline</h3>
+          <p id="shareText">Create a link anyone can open to see your timeline, eras and photos. They can look but can't change anything, and they don't need an account.</p>
+          <div class="share-url" id="shareUrlRow" hidden>
+            <input type="text" id="shareUrl" readonly aria-label="Share link">
+            <button class="btn" id="copyShare">Copy</button>
+          </div>
+          <div class="btns">
+            <button class="btn primary" id="shareToggle">Create share link</button>
+            <button class="btn sm" id="newLink" hidden title="The old link stops working">Make a new link</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Back up your events</h3>
+          <p>Download your events as a spreadsheet file you can open in Excel or Google Sheets, or re-import later. Photos aren't included.</p>
+          <div class="btns"><button class="btn" id="dlCsv">Download CSV</button><button class="btn" id="copyCsv">Copy as CSV</button></div>
+        </div>
+        <div class="card">
+          <h3>Your account</h3>
+          <p id="saveExplain"></p>
+          <p id="acctEmail"></p>
+          <div class="btns"><button class="btn" id="signOut">Sign out</button></div>
+          <details>
+            <summary style="cursor:pointer;font-weight:600;font-size:14px">Change password</summary>
+            <form class="stack" id="pwForm" style="margin-top:10px" autocomplete="off">
+              <label>Current password<input type="password" id="pwCur" autocomplete="current-password"></label>
+              <label>New password<input type="password" id="pwNew" minlength="8" autocomplete="new-password"></label>
+              <div id="pwMsg" hidden></div>
+              <div class="btns"><button class="btn" type="submit">Change password</button></div>
+            </form>
+          </details>
+        </div>
+        <div class="card">
+          <h3>Start over</h3>
+          <p>Removes every event, era and photo from your timeline. Your account stays.</p>
+          <div class="btns"><button class="btn danger" id="clearAll">Clear everything</button></div>
+        </div>
+        <div class="card">
+          <h3>Delete your account</h3>
+          <p>Permanently deletes your account, timeline and photos from Lifeline. Share links stop working. This can't be undone.</p>
+          <label>Password<input type="password" id="delPw" autocomplete="current-password"></label>
+          <div id="delMsg" hidden></div>
+          <div class="btns"><button class="btn danger" id="delAcct">Delete my account</button></div>
+        </div>
+        <p class="hint"><a href="/privacy" target="_blank" rel="noopener">How Lifeline handles your data</a></p>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="back" id="auth" hidden>
+  <form class="auth-card" id="authForm" role="dialog" aria-modal="true" aria-labelledby="authTitle" autocomplete="on">
+    <span class="brand">Lifeline</span>
+    <h2 id="authTitle">Create your free account</h2>
+    <p id="authIntro">Build a timeline of your life from a simple form, a spreadsheet or your Facebook posts. Your timeline is private until you choose to share it.</p>
+    <label>Email<input type="email" id="authEmail" autocomplete="email" required></label>
+    <label>Password<input type="password" id="authPw" minlength="8" autocomplete="new-password" required></label>
+    <p class="hint" id="authPwHint">At least 8 characters.</p>
+    <div id="authMsg" hidden></div>
+    <button class="btn primary" type="submit" id="authSubmit">Create account</button>
+    <p id="authSwitchText">Already have an account? <button type="button" class="auth-switch" id="authSwitch">Sign in</button></p>
+    <button type="button" class="btn" id="authLater">Look around the example first</button>
+    <p class="hint"><a href="/privacy" target="_blank" rel="noopener">How Lifeline handles your data</a></p>
+  </form>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
+  <div class="lb-top">
+    <span class="count" id="lbCount"></span>
+    <div class="ctl"><button class="ic" id="lbPlay">Play</button><button class="ic" id="lbClose">Close</button></div>
+  </div>
+  <div class="lb-stage" id="lbStage">
+    <img id="lbImg" alt="">
+    <button class="lb-nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
+    <button class="lb-nav next" id="lbNext" aria-label="Next photo">›</button>
+  </div>
+  <div class="lb-cap"><div class="y" id="lbYear"></div><div class="d" id="lbDate"></div><div class="t" id="lbTitle"></div></div>
+</div>
+
+<script>
+const CATS = [["milestone","Milestone"],["family","Family"],["education","Education"],["work","Work"],["home","Home"],["travel","Travel"],["post","Post"],["other","Other"]];
+const CAT_LABEL = Object.fromEntries(CATS);
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS_FULL = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+const LOCAL_KEY = "lifeline.v1";
+const $ = id => document.getElementById(id);
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function uid(){return Math.random().toString(36).slice(2,10)}
+
+const SAMPLE_NAME = "Example: Jordan Avery";
+function makeSample(){
+  const entries=[
+    {date:"1984-06-02",title:"Born",cat:"milestone",place:"Tulsa, OK",desc:"Arrived three weeks early during a thunderstorm."},
+    {date:"1990-08",title:"Started first grade at Lincoln Elementary",cat:"education",place:"Tulsa, OK",desc:""},
+    {date:"1996",title:"Family moved to Texas",cat:"home",place:"Plano, TX",desc:"Dad took a job with an engineering firm in Dallas."},
+    {date:"2002-05-24",title:"Graduated high school",cat:"education",place:"Plano, TX",desc:""},
+    {date:"2006-05",title:"B.S. in Biology, University of North Texas",cat:"education",place:"Denton, TX",desc:""},
+    {date:"2006-08",title:"First teaching job",cat:"work",place:"Garland, TX",desc:"Seventh-grade life science."},
+    {date:"2011-10-15",title:"Married Sam",cat:"family",place:"Fredericksburg, TX",desc:"Small ceremony at a vineyard, about forty guests.",photos:["sample:vineyard"]},
+    {date:"2014-03-08",end:"2014-03-18",title:"Road trip through the national parks of Utah",cat:"travel",place:"Utah",desc:"Zion, Bryce, Capitol Reef, Arches and Canyonlands in eleven days.",photos:["sample:mesa","sample:arch","sample:canyon"]},
+    {date:"2015-07-09",title:"Daughter Maya born",cat:"family",place:"Frisco, TX",desc:""},
+    {date:"2019-09-14",title:"Took Maya to her first concert",cat:"family",place:"Dallas, TX",desc:"She lasted until the encore and fell asleep in the car.",src:"facebook",imp:8},
+    {date:"2021-06",title:"Moved into the house on Elm Street",cat:"home",place:"Frisco, TX",desc:""},
+    {date:"2023-11-02",title:"Twenty years since we left Oklahoma",cat:"post",place:"",desc:"Twenty years since we left Oklahoma, and I still miss the storms.",src:"facebook",photos:["sample:storm"],imp:5}
+  ];
+  entries.forEach(e=>e.id=uid());
+  const eras=[
+    {id:uid(),name:"Growing up in Tulsa",start:"1984-06",end:"1996",color:"#C2590A"},
+    {id:uid(),name:"University of North Texas",start:"2002-08",end:"2006-05",color:"#2F5FB3"},
+    {id:uid(),name:"Teaching in Garland",start:"2006-08",end:"2016-05",color:"#0E6B70"},
+    {id:uid(),name:"Dating Sam",start:"2008-03",end:"2011-10",color:"#B1306B"},
+    {id:uid(),name:"Coaching Little League",start:"2012-03",end:"2014-06",color:"#3B7F2E"},
+    {id:uid(),name:"Life in Frisco",start:"2015-07",end:"",color:"#7A4FB5"}
+  ];
+  return {name:SAMPLE_NAME, entries, eras, sample:true};
+}
+const ERA_COLORS=["#2F5FB3","#0E6B70","#3B7F2E","#C2590A","#B1306B","#7A4FB5","#8A6A12","#B3261E","#4A6178"];
+function eraStart(e){ const [y,m]=e.start.split("-").map(Number); return y+(m?(m-1)/12:0); }
+function eraEnd(e){ if(!e.end){ const d=new Date(); return d.getFullYear()+(d.getMonth()+1)/12; } const [y,m]=e.end.split("-").map(Number); return m? y+m/12 : y+1; }
+function fmtSpan(e){ return `${fmtDate(e.start)} – ${e.end?fmtDate(e.end):"now"}`; }
+function eraYears(e){ const n=eraEnd(e)-eraStart(e); return n<1 ? `${Math.max(1,Math.round(n*12))} mo` : `${Math.round(n*10)/10} yr`; }
+function textOn(hex){ const h=hex.replace("#",""); const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16); return (0.299*r+0.587*g+0.114*b)>150 ? "#141A21" : "#FFFFFF"; }
+function eraVars(e){ return `--ec:${e.color};--et:${textOn(e.color)}`; }
+function erasAt(t){ return (state.eras||[]).filter(e=>t>=eraStart(e)&&t<eraEnd(e)); }
+
+/* ---------- App state ---------- */
+let state = makeSample();
+let mode = "starting";          // starting | server (signed in) | signedout | shared (view-only link)
+let cloud = { uid:null }, me=null, aiOn=false, shareToken=null;
+const sharedToken = (location.pathname.match(/^\/s\/([A-Za-z0-9_-]{10,64})\/?$/)||[])[1]||null;
+let editingId=null, visible=[], filters=new Set(CATS.map(c=>c[0]));
+let formPhotos=[], removedPhotos=[];
+let prefs = (()=>{ try{ return JSON.parse(localStorage.getItem("lifeline.prefs"))||{}; }catch(e){ return {}; } })();
+let view = prefs.view==="list" ? "list" : "track";
+function savePrefs(){ try{ localStorage.setItem("lifeline.prefs", JSON.stringify(prefs)); }catch(e){} }
+function loadLocal(key){ try{ const s=JSON.parse(localStorage.getItem(key)); if(s && Array.isArray(s.entries)) return s; }catch(e){} return null; }
+function saveLocal(){ if(state.sample||!cloud.uid) return; try{ localStorage.setItem(LOCAL_KEY+":"+cloud.uid, JSON.stringify(state)); }catch(e){} }
+function save(){ saveLocal(); if(mode==="server") scheduleCloud(); }
+
+/* ---------- Status pill ---------- */
+function setStatus(kind,text,tip){
+  const el=$("status"); el.dataset.s=kind; $("statusText").textContent=text; el.title=tip||"";
+  $("saveExplain").textContent = mode==="server"
+    ? "Your timeline and photos are saved to your Lifeline account. Sign in from any device to see them. Only you can see them unless you create a share link."
+    : "Sign in to save your timeline.";
+}
+function refreshStatus(){
+  if(mode==="shared") return setStatus("cloud","View only","This is a shared copy. Only its owner can change it.");
+  if(mode==="signedout") return setStatus("local","Not signed in","Create an account or sign in to save a timeline");
+  if(mode!=="server") return;
+  if(cloudErr) return setStatus("err",cloudErr);
+  if(cloudBusy||cloudTimer) return setStatus("busy","Saving");
+  if(pending.size) return setStatus("busy",`Uploading photos · ${pending.size} left`);
+  setStatus("cloud","Saved to your account","Available on any device where you sign in.");
+}
+
+/* ---------- Dates ---------- */
+const pad = n => String(n).padStart(2,"0");
+function mk(y,m,d){
+  y=+y; if(!(y>=1000 && y<=2999)) return null;
+  if(!m) return String(y);
+  m=+m; if(!(m>=1&&m<=12)) return String(y);
+  if(!d) return `${y}-${pad(m)}`;
+  d=+d; if(!(d>=1&&d<=31)) return `${y}-${pad(m)}`;
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+function monthIdx(s){ s=s.toLowerCase().replace(/\.$/,""); const i=MONTHS_FULL.findIndex(m=>m.startsWith(s.slice(0,3))); return s.length>=3&&i>=0?i+1:0; }
+function parseDate(v){
+  if(v==null||v==="") return null;
+  if(v instanceof Date && !isNaN(v)) return mk(v.getFullYear(),v.getMonth()+1,v.getDate());
+  if(typeof v==="number"){
+    if(Number.isInteger(v)&&v>=1000&&v<=2999) return String(v);
+    if(v>2999){ const d=new Date(Math.round((v-25569)*864e5)); return mk(d.getUTCFullYear(),d.getUTCMonth()+1,d.getUTCDate()); }
+    return null;
+  }
+  let s=String(v).trim().replace(/^(c\.|circa|about|approx\.?|~)\s*/i,""), m;
+  if(m=s.match(/^(\d{4})$/)) return mk(m[1]);
+  if(m=s.match(/^(\d{4})[-\/.](\d{1,2})$/)) return mk(m[1],m[2]);
+  if(m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)) return mk(m[1],m[2],m[3]);
+  if(m=s.match(/^(\d{1,2})[\/\-.](\d{4})$/)) return mk(m[2],m[1]);
+  if(m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/)){ let y=+m[3]; if(y<100) y+= y>30?1900:2000; return mk(y,m[1],m[2]); }
+  if(m=s.match(/^([A-Za-z]+)\.?,?\s+(\d{4})$/)){ const mi=monthIdx(m[1]); return mi?mk(m[2],mi):null; }
+  if(m=s.match(/^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/)){ const mi=monthIdx(m[1]); return mi?mk(m[3],mi,m[2]):null; }
+  if(m=s.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\.?,?\s+(\d{4})$/)){ const mi=monthIdx(m[2]); return mi?mk(m[3],mi,m[1]):null; }
+  const t=Date.parse(s); if(!isNaN(t)){ const d=new Date(t); return mk(d.getFullYear(),d.getMonth()+1,d.getDate()); }
+  return null;
+}
+function fmtDate(d){ const [y,m,dd]=d.split("-"); if(!m) return y; if(!dd) return `${MONTHS[+m-1]} ${y}`; return `${MONTHS[+m-1]} ${+dd}, ${y}`; }
+const sortKey = d => d.padEnd(10,"-");
+const DAYMS=864e5;
+function dObj(d,endSide){ const [y,m,dd]=d.split("-").map(Number); if(!m) return endSide?new Date(y,11,31):new Date(y,0,1); if(!dd) return endSide?new Date(y,m,0):new Date(y,m-1,1); return new Date(y,m-1,dd); }
+function tStart(d){ const [y,m,dd]=d.split("-").map(Number); if(!m) return y; if(!dd) return y+(m-1)/12; const days=new Date(y,m,0).getDate(); return y+(m-1)/12+(dd-1)/days/12; }
+function tEnd(d){ const [y,m,dd]=d.split("-").map(Number); if(!m) return y+1; if(!dd) return y+m/12; const days=new Date(y,m,0).getDate(); return y+(m-1)/12+dd/days/12; }
+function fmtRange(e){
+  if(!e.end) return fmtDate(e.date);
+  const [y1,m1,d1]=e.date.split("-"), [y2,m2,d2]=e.end.split("-");
+  if(y1===y2 && m1 && m2 && d1 && d2){
+    if(m1===m2) return `${MONTHS[+m1-1]} ${+d1} – ${+d2}, ${y1}`;
+    return `${MONTHS[+m1-1]} ${+d1} – ${MONTHS[+m2-1]} ${+d2}, ${y1}`;
+  }
+  if(y1===y2 && m1 && m2 && !d1 && !d2) return `${MONTHS[+m1-1]} – ${MONTHS[+m2-1]} ${y1}`;
+  return `${fmtDate(e.date)} – ${fmtDate(e.end)}`;
+}
+function duration(e){
+  if(!e.end) return "";
+  const days=Math.round((dObj(e.end,true)-dObj(e.date,false))/DAYMS)+1;
+  if(days<=0) return "";
+  if(days<60) return `${days} day${days>1?"s":""}`;
+  const mo=Math.round(days/30.44); if(mo<24) return `${mo} months`;
+  return `${Math.round(days/365.25*10)/10} years`;
+}
+function tval(d){ const [y,m,dd]=d.split("-").map(Number); if(!m) return y+0.5; if(!dd) return y+(m-0.5)/12; return y+(m-1)/12+(dd-0.5)/372; }
+function birthYear(){ const b=state.entries.find(e=>/^born\b|^birth\b/i.test(e.title)); return b?+b.date.slice(0,4):null; }
+
+/* ---------- Photo storage: this browser first, account copy behind it ---------- */
+let dbp=null; const mem=new Map(); const urlCache=new Map();
+function idbOpen(){
+  if(!dbp) dbp=new Promise((res,rej)=>{ try{ const r=indexedDB.open("lifeline-photos",2);
+    r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains("p")) d.createObjectStore("p"); if(!d.objectStoreNames.contains("imp")) d.createObjectStore("imp"); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }catch(e){ rej(e); } });
+  return dbp;
+}
+async function idbS(store,m,fn){
+  const d=await idbOpen();
+  return new Promise((res,rej)=>{ const tx=d.transaction(store,m); const r=fn(tx.objectStore(store));
+    tx.oncomplete=()=>res(r&&r.result); tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error); });
+}
+async function idb(m,fn){
+  const d=await idbOpen();
+  return new Promise((res,rej)=>{ const tx=d.transaction("p",m); const r=fn(tx.objectStore("p"));
+    tx.oncomplete=()=>res(r&&r.result); tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error); });
+}
+async function localBlob(id){ if(mem.has(id)) return mem.get(id); try{ return await idb("readonly",s=>s.get(id)); }catch(e){ return null; } }
+async function localPut(id,blob){ try{ await idb("readwrite",s=>s.put(blob,id)); }catch(e){ mem.set(id,blob); } }
+async function putPhoto(blob){ const id="p"+uid()+uid(); await localPut(id,blob); if(mode==="server") queueUpload(id); return id; }
+async function getBlob(id){ return await localBlob(id); }
+async function delPhotos(ids){
+  ids=(ids||[]).filter(i=>!i.startsWith("sample:"));
+  if(!ids.length) return;
+  ids.forEach(i=>{ mem.delete(i); pending.delete(i); const u=urlCache.get(i); if(u){ URL.revokeObjectURL(u); urlCache.delete(i); } });
+  savePending();
+  try{ await idb("readwrite",s=>{ ids.forEach(i=>s.delete(i)); }); }catch(e){}
+  if(mode==="server") for(const i of ids){ try{ await api(`/api/photos/${i}`,{method:"DELETE"}); }catch(e){} }
+}
+async function shrink(blob,max=1600,q=.85){
+  try{
+    const bmp=await createImageBitmap(blob);
+    const k=Math.min(1,max/Math.max(bmp.width,bmp.height));
+    const c=document.createElement("canvas"); c.width=Math.round(bmp.width*k); c.height=Math.round(bmp.height*k);
+    c.getContext("2d").drawImage(bmp,0,0,c.width,c.height); if(bmp.close) bmp.close();
+    return await new Promise(r=>c.toBlob(b=>r(b||blob),"image/jpeg",q));
+  }catch(e){ return blob; }
+}
+function blobToDataUrl(b){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(b); }); }
+function dataUrlToBlob(u){ const [h,d]=u.split(","); const bin=atob(d); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return new Blob([a],{type:(h.match(/data:([^;]+)/)||[])[1]||"image/jpeg"}); }
+async function photoURL(id){
+  if(urlCache.has(id)) return urlCache.get(id);
+  const blob = id.startsWith("sample:") ? await paintSample(id.slice(7)) : await getBlob(id);
+  if(!blob){
+    // Not in this browser: load it from the server
+    if(mode==="shared") return `/api/shared/${sharedToken}/photos/${id}`;
+    if(mode==="server") return `/api/photos/${id}`;
+    return "";
+  }
+  const u=URL.createObjectURL(blob); urlCache.set(id,u); return u;
+}
+function paintSample(kind){
+  const W=1200,H=800,c=document.createElement("canvas"); c.width=W; c.height=H; const g=c.getContext("2d");
+  const grad=(stops)=>{ const gr=g.createLinearGradient(0,0,0,H); stops.forEach((s,i)=>gr.addColorStop(i/(stops.length-1),s)); g.fillStyle=gr; g.fillRect(0,0,W,H); };
+  const poly=(col,pts)=>{ g.fillStyle=col; g.beginPath(); g.moveTo(pts[0],pts[1]); for(let i=2;i<pts.length;i+=2) g.lineTo(pts[i],pts[i+1]); g.closePath(); g.fill(); };
+  if(kind==="mesa"){ grad(["#F4A259","#F7D9A6"]); g.fillStyle="#FFF3D6"; g.beginPath(); g.arc(900,230,60,0,7); g.fill();
+    poly("#B5532B",[0,800,0,470,160,470,190,420,420,420,450,480,620,480,640,520,1200,520,1200,800]);
+    poly("#8E3B1F",[0,800,0,600,300,600,340,560,700,560,760,640,1200,640,1200,800]); poly("#5E2814",[0,800,0,720,1200,700,1200,800]); }
+  else if(kind==="arch"){ grad(["#3B6EA8","#9CC3E4"]); poly("#C2622F",[150,800,150,330,1050,330,1050,800]);
+    g.fillStyle="#9CC3E4"; g.beginPath(); g.ellipse(600,800,320,330,0,Math.PI,0); g.fill(); poly("#7A3418",[0,800,0,740,1200,740,1200,800]); }
+  else if(kind==="canyon"){ grad(["#F9C784","#E8945A"]); poly("#A84A26",[0,0,420,0,380,260,460,520,400,800,0,800]); poly("#C0602E",[1200,0,760,0,820,300,740,560,820,800,1200,800]);
+    poly("#5B8E7D",[400,800,460,520,740,560,820,800]); }
+  else if(kind==="vineyard"){ grad(["#B9D9EB","#F3E9C6"]); poly("#7FA05A",[0,800,0,440,300,380,650,430,1200,360,1200,800]);
+    g.strokeStyle="#4E6E35"; g.lineWidth=10; for(let i=-6;i<14;i++){ g.beginPath(); g.moveTo(600+i*20,430); g.lineTo(600+i*140,820); g.stroke(); }
+    poly("#EDE6D8",[820,420,820,330,900,280,980,330,980,420]); }
+  else { grad(["#232B3A","#4C5A6E","#8A8F7C"]); g.fillStyle="#1A202B"; for(let i=0;i<7;i++){ g.beginPath(); g.ellipse(120+i*170,180+(i%2)*40,220,90,0,0,7); g.fill(); }
+    g.strokeStyle="#F6F1C9"; g.lineWidth=7; g.beginPath(); [[720,240],[680,380],[740,390],[690,560]].forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y)); g.stroke();
+    poly("#2E3B26",[0,800,0,640,1200,610,1200,800]); }
+  g.fillStyle="rgba(0,0,0,.5)"; g.fillRect(0,H-56,W,56); g.fillStyle="#fff"; g.font="600 26px system-ui, sans-serif"; g.fillText("Example photo",24,H-20);
+  return new Promise(r=>c.toBlob(r,"image/jpeg",.85));
+}
+async function fillImg(img){ const id=img.dataset.src; if(!id) return; img.removeAttribute("data-src"); const u=await photoURL(id); if(u) img.src=u; }
+const pageIO = "IntersectionObserver" in window ? new IntersectionObserver(es=>es.forEach(e=>{ if(e.isIntersecting){ pageIO.unobserve(e.target); fillImg(e.target); } }),{rootMargin:"800px"}) : null;
+function hydrate(root,io=pageIO){ root.querySelectorAll("img[data-src]").forEach(img=> io?io.observe(img):fillImg(img)); }
+
+/* ---------- Server storage ---------- */
+let cloudTimer=null, cloudBusy=false, cloudAgain=false, cloudErr="", version=0, lastSent=null, retryT=null;
+let pending=new Set();
+function pendingKey(){ return "lifeline.pending:"+cloud.uid; }
+function loadPending(){ try{ pending=new Set(JSON.parse(localStorage.getItem(pendingKey()))||[]); }catch(e){ pending=new Set(); } }
+function savePending(){ if(!cloud.uid) return; try{ localStorage.setItem(pendingKey(), JSON.stringify([...pending])); }catch(e){} }
+const KEEP_FIELDS=["id","date","end","title","desc","cat","place","src","fbts","photos","videos","imp"];
+function slim(e){ const o={}; for(const k of KEEP_FIELDS) if(e[k]!=null && e[k]!=="" && !(Array.isArray(e[k])&&!e[k].length)) o[k]=e[k]; return o; }
+function docOut(){ return {name:state.name||"", entries:state.entries.map(slim), eras:(state.eras||[]).map(({id,name,start,end,color})=>({id,name,start,end:end||"",color}))}; }
+function docIn(d){ return {name:d.name||"", entries:Array.isArray(d.entries)?d.entries:[], eras:Array.isArray(d.eras)?d.eras:[], sample:false}; }
+
+async function api(path,opts={}){
+  const o={method:opts.method||"GET", headers:{...(opts.headers||{})}, credentials:"same-origin", signal:opts.signal};
+  if(o.method!=="GET") o.headers["X-Lifeline"]="1";
+  if(opts.json!==undefined){ o.headers["Content-Type"]="application/json"; o.body=JSON.stringify(opts.json); }
+  else if(opts.body!==undefined) o.body=opts.body;
+  const r=await fetch(path,o);
+  let data=null; try{ data=await r.json(); }catch(e){}
+  if(!r.ok){ const err=new Error((data&&data.error)||`Something went wrong (${r.status}). Try again.`); err.status=r.status; err.data=data; err.code=data&&data.code; throw err; }
+  return data||{};
+}
+
+async function initServer(){
+  if(sharedToken) return loadShared();
+  let r;
+  try{ r=await api("/api/me"); }
+  catch(e){ mode="signedout"; refreshStatus(); setStatus("err","Can't reach Lifeline. Check your connection and reload."); return; }
+  aiOn=!!r.ai; updateAiAvailability();
+  if(!r.user){ mode="signedout"; refreshStatus(); render(); showAuth("signup"); return; }
+  await signedIn(r.user);
+}
+async function signedIn(user){
+  me=user; cloud.uid=user.id; mode="server"; loadPending();
+  $("acctEmail").textContent=`Signed in as ${user.email}.`;
+  const cached=loadLocal(LOCAL_KEY+":"+user.id);
+  if(cached){ state=docIn(cached); render(); }
+  refreshStatus();
+  try{
+    const t=await api("/api/timeline");
+    version=t.version||0; shareToken=t.share&&t.share.on?t.share.token:null; renderShare();
+    if(t.doc){ state=docIn(t.doc); lastSent=JSON.stringify(docOut()); saveLocal(); }
+    else if(!cached){ state=makeSample(); }
+    render(); renderEraList();
+  }catch(e){ cloudErr="Couldn't load your timeline. Check your connection and reload."; }
+  refreshStatus(); pumpUploads(); checkImport();
+}
+async function loadShared(){
+  mode="shared"; document.body.classList.add("readonly");
+  $("sharedBanner").hidden=false; $("personName").readOnly=true;
+  try{
+    const r=await api(`/api/shared/${sharedToken}`);
+    state=docIn(r.doc);
+    $("sharedText").textContent = `You're looking at ${state.name?state.name+"'s":"a shared"} timeline. It's view only.`;
+    document.title = (state.name?state.name+" · ":"")+"Lifeline";
+  }catch(e){
+    state={name:"",entries:[],eras:[],sample:false};
+    $("sharedText").textContent=e.message;
+  }
+  render(); refreshStatus();
+}
+function scheduleCloud(){ clearTimeout(cloudTimer); cloudTimer=setTimeout(()=>{cloudTimer=null; flushCloud();},1200); refreshStatus(); }
+async function flushCloud(){
+  if(mode!=="server" || state.sample) return;
+  if(cloudBusy){ cloudAgain=true; return; }
+  clearTimeout(cloudTimer); cloudTimer=null;
+  const body=docOut(), str=JSON.stringify(body);
+  if(str===lastSent){ cloudErr=""; refreshStatus(); return; }
+  cloudBusy=true; refreshStatus();
+  try{
+    const r=await api("/api/timeline",{method:"PUT",json:{doc:body,version}});
+    version=r.version; lastSent=str; cloudErr="";
+  }catch(e){
+    if(e.status===409 && e.data && e.data.doc){
+      version=e.data.version; state=docIn(e.data.doc); lastSent=JSON.stringify(docOut()); saveLocal(); render(); renderEraList(); cloudErr="";
+      toast("This timeline was changed on another device, so the newest version was loaded. Your last change wasn't saved, so please make it again.");
+    } else if(e.status===401){ cloudErr="You've been signed out. Sign in again to save."; showAuth("login"); }
+    else if(e.status===413){ cloudErr="Your timeline is too large to save in one go."; }
+    else { cloudErr="Not saved yet. Retrying…"; clearTimeout(retryT); retryT=setTimeout(flushCloud,15000); }
+  }
+  cloudBusy=false; refreshStatus();
+  if(cloudAgain){ cloudAgain=false; flushCloud(); }
+}
+addEventListener("beforeunload",e=>{ if(mode==="server" && (cloudBusy||cloudTimer||(lastSent!==null&&JSON.stringify(docOut())!==lastSent&&!state.sample))){ e.preventDefault(); e.returnValue=""; } });
+function queueUpload(id){ pending.add(id); savePending(); pumpUploads(); }
+let pumping=false;
+async function pumpUploads(){
+  if(pumping||mode!=="server") return; pumping=true;
+  let tries=0;
+  while(pending.size && mode==="server"){
+    const id=pending.values().next().value;
+    const blob=await localBlob(id);
+    if(!blob){ pending.delete(id); savePending(); continue; }
+    try{
+      const body=await shrink(blob,1600,.85);
+      await api(`/api/photos/${id}`,{method:"PUT",body,headers:{"Content-Type":body.type||"image/jpeg"}});
+      pending.delete(id); savePending(); tries=0; refreshStatus();
+    }catch(e){
+      if(e.status===400||e.status===413||e.status===415){ pending.delete(id); savePending(); continue; }
+      if(e.status===401){ break; }
+      if(++tries>3){ cloudErr=`${pending.size} photos are waiting to upload. They'll retry next time you open Lifeline.`; break; }
+      await sleep(1500*tries);
+    }
+  }
+  pumping=false; refreshStatus();
+}
+
+/* ---------- Sign in ---------- */
+let authMode="signup";
+function showAuth(m, intro){
+  setAuthMode(m||authMode);
+  if(intro) $("authIntro").textContent=intro;
+  $("auth").hidden=false; lock(); setTimeout(()=>$("authEmail").focus(),30);
+}
+function hideAuth(){ $("auth").hidden=true; authMsg(""); unlockIfClear(); }
+function setAuthMode(m){
+  authMode=m; const up=m==="signup";
+  $("authTitle").textContent = up ? "Create your free account" : "Welcome back";
+  $("authIntro").textContent = up ? "Build a timeline of your life from a simple form, a spreadsheet or your Facebook posts. Your timeline is private until you choose to share it." : "Sign in to see and edit your timeline.";
+  $("authSubmit").textContent = up ? "Create account" : "Sign in";
+  $("authPw").autocomplete = up ? "new-password" : "current-password";
+  $("authPwHint").hidden = !up;
+  $("authSwitchText").firstChild.textContent = up ? "Already have an account? " : "New to Lifeline? ";
+  $("authSwitch").textContent = up ? "Sign in" : "Create an account";
+  authMsg("");
+}
+function authMsg(t){ const el=$("authMsg"); el.hidden=!t; el.className="msg err"; el.textContent=t||""; }
+$("authSwitch").addEventListener("click",()=>setAuthMode(authMode==="signup"?"login":"signup"));
+$("authLater").addEventListener("click",hideAuth);
+$("auth").addEventListener("click",e=>{ if(e.target===$("auth")) hideAuth(); });
+$("authForm").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  const btn=$("authSubmit"); btn.disabled=true;
+  try{
+    const r=await api(authMode==="signup"?"/api/signup":"/api/login",{method:"POST",json:{email:$("authEmail").value,password:$("authPw").value}});
+    $("authPw").value=""; hideAuth();
+    await signedIn(r.user);
+    if(authMode==="signup"){ $("sampleText").textContent="You're signed in. These are example events; clear them when you're ready to add your own."; toast("Account created. Your timeline will be saved as you go."); }
+    else toast("Signed in");
+  }catch(e){ authMsg(e.message); }
+  btn.disabled=false;
+});
+function needAccount(){
+  if(mode==="server") return true;
+  if(mode==="shared") return false;
+  showAuth("signup","Create a free account to build your own timeline. It only takes a moment.");
+  return false;
+}
+
+/* ---------- Share & account ---------- */
+function renderShare(){
+  const on=!!shareToken;
+  $("shareUrlRow").hidden=!on; $("newLink").hidden=!on;
+  $("shareToggle").textContent = on ? "Turn off share link" : "Create share link";
+  $("shareToggle").className = on ? "btn" : "btn primary";
+  if(on) $("shareUrl").value=`${location.origin}/s/${shareToken}`;
+  $("shareText").textContent = on
+    ? "Anyone with this link can see your timeline, eras and photos. They can't change anything and don't need an account. Turn the link off any time."
+    : "Create a link anyone can open to see your timeline, eras and photos. They can look but can't change anything, and they don't need an account.";
+}
+async function setShare(on,newLink){
+  if(state.sample) return toast("Add something of your own before sharing your timeline.");
+  try{
+    await flushCloud();
+    const r=await api("/api/share",{method:"POST",json:{on,newLink:!!newLink}});
+    shareToken=r.on?r.token:null; renderShare();
+    toast(on?(newLink?"New link made. The old link no longer works.":"Share link created"):"Share link turned off");
+  }catch(e){ toast(e.message); }
+}
+$("shareToggle").addEventListener("click",()=>setShare(!shareToken));
+$("newLink").addEventListener("click",ev=>arm(ev.currentTarget,"Make a new link","Old link will stop working. Click again",()=>setShare(true,true)));
+$("copyShare").addEventListener("click",()=>{
+  const v=$("shareUrl").value;
+  navigator.clipboard.writeText(v).then(()=>toast("Link copied")).catch(()=>{ $("shareUrl").select(); toast("Press Ctrl+C (or Cmd+C) to copy"); });
+});
+$("shareBtn").addEventListener("click",()=>{ if(needAccount()) openDrawer("data"); });
+$("signOut").addEventListener("click",async()=>{
+  await flushCloud();
+  try{ await api("/api/logout",{method:"POST"}); }catch(e){}
+  location.href="/";
+});
+$("pwForm").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  const m=$("pwMsg");
+  try{ await api("/api/password",{method:"POST",json:{current:$("pwCur").value,next:$("pwNew").value}}); m.className="msg"; m.textContent="Password changed. Other devices have been signed out."; $("pwCur").value=""; $("pwNew").value=""; }
+  catch(e){ m.className="msg err"; m.textContent=e.message; }
+  m.hidden=false;
+});
+$("delAcct").addEventListener("click",ev=>arm(ev.currentTarget,"Delete my account","Click again to delete everything",async()=>{
+  const m=$("delMsg");
+  try{
+    await api("/api/account",{method:"DELETE",json:{password:$("delPw").value}});
+    try{ localStorage.removeItem(LOCAL_KEY+":"+cloud.uid); localStorage.removeItem(pendingKey()); }catch(e){}
+    try{ await idbS("imp","readwrite",s=>s.delete("fb:"+cloud.uid)); }catch(e){}
+    location.href="/";
+  }catch(e){ m.hidden=false; m.className="msg err"; m.textContent=e.message; }
+}));
+function csvText(){
+  const q=s=>`"${String(s??"").replace(/"/g,'""')}"`;
+  const rows=[["Date","End date","Title","Description","Category","Place"]].concat([...state.entries].sort((a,b)=>sortKey(a.date).localeCompare(sortKey(b.date))).map(e=>[e.date,e.end||"",e.title,e.desc,CAT_LABEL[e.cat],e.place]));
+  return rows.map(r=>r.map(q).join(",")).join("\n");
+}
+$("dlCsv").addEventListener("click",()=>{
+  const blob=new Blob(["\ufeff"+csvText()],{type:"text/csv"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`${(state.name||"lifeline").replace(/[^\w\- ]+/g,"").trim()||"lifeline"} timeline.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+});
+
+/* ---------- Rendering ---------- */
+function toast(t){ const el=$("toast"); el.textContent=t; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,3600); }
+function dropSample(){ if(state.sample){ state={name: state.name===SAMPLE_NAME?"":state.name, entries:[], eras:[], sample:false}; renderEraList(); } }
+function addEntries(arr){ dropSample(); state.entries.push(...arr.map(e=>({id:uid(),...e}))); save(); render(); }
+function priority(e){
+  let p = e.src==="facebook" ? 0.4+(e.imp??5)/10 : e.src==="sheet" ? 1.3 : 1.5;
+  if(e.photos&&e.photos.length) p+=0.3;
+  if(e.cat==="milestone"||e.cat==="family") p+=0.15;
+  return p;
+}
+function render(){
+  $("personName").value = state.name||"";
+  $("sampleBanner").hidden = !state.sample;
+  const all = state.entries;
+  $("stCount").textContent = all.length;
+  const years = all.map(e=>+e.date.slice(0,4));
+  $("stSpan").textContent = years.length ? (Math.max(...years)-Math.min(...years)+1) : "–";
+  const counts = {}; all.forEach(e=>counts[e.cat]=(counts[e.cat]||0)+1);
+  $("chips").innerHTML = CATS.filter(([k])=>counts[k]).map(([k,l])=>
+    `<button class="chip" data-cat="${k}" aria-pressed="${filters.has(k)}" style="--cc:var(--c-${k})"><i></i>${l}<span class="n">${counts[k]}</span></button>`).join("")
+    + (state.eras.length ? `<span class="chip-sep"></span>` + sortedEras().map(e=>`<button class="chip era" data-era="${e.id}" style="--cc:${e.color}" title="Show ${esc(e.name)} on the timeline"><i></i>${esc(e.name)}</button>`).join("") : "")
+    + `<button class="chip" id="addEraChip" style="--cc:var(--muted)">+ Era</button>`;
+  const q = $("search").value.trim().toLowerCase();
+  visible = all.filter(e=>filters.has(e.cat) && (!q || (e.title+" "+(e.desc||"")+" "+(e.place||"")).toLowerCase().includes(q)))
+               .sort((a,b)=> sortKey(a.date).localeCompare(sortKey(b.date)));
+  $("slideshow").disabled = !visible.some(e=>e.photos&&e.photos.length);
+  $("vTrack").setAttribute("aria-pressed", view==="track"); $("vList").setAttribute("aria-pressed", view==="list");
+  $("trackView").hidden = view!=="track"; $("zoombar").hidden = view!=="track"; $("listView").hidden = view!=="list";
+  if(view==="track") layoutTrack(); else renderList();
+}
+function renderList(){
+  const tl=$("timeline");
+  if(!visible.length){ tl.innerHTML=`<div class="track-empty"><h3>No events to show</h3>Add your first event with Add &amp; import, or turn categories back on.</div>`; return; }
+  const birth=birthYear(); let html=`<div class="spine">`, cur=null;
+  for(const e of visible){
+    const y=e.date.slice(0,4);
+    if(y!==cur){ cur=y;
+      const yr=+y, inEras=sortedEras().filter(er=>eraStart(er)<yr+1&&eraEnd(er)>yr);
+      html+=`<div class="year"><h3>${y}</h3><span class="age">${birth&&yr>birth?`age ${yr-birth}`:""}</span>${inEras.length?`<span class="eras">${inEras.map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</span>`:""}</div>`; }
+    const src=e.src==="facebook"?`<span class="src">From Facebook</span>`:e.src==="sheet"?`<span class="src">From spreadsheet</span>`:"";
+    const ph=(e.photos||[]).slice(0,6).map(p=>`<span class="sq"><img alt="" data-src="${p}"></span>`).join("");
+    html+=`<button class="ev" data-id="${e.id}" style="--cc:var(--c-${e.cat})">
+      <span class="meta"><span class="date">${fmtRange(e)}</span>${e.end?`<span>${duration(e)}</span>`:""}<span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src}</span>
+      <h4>${esc(e.title)}</h4>${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}${ph?`<span class="strip">${ph}</span>`:""}</button>`;
+  }
+  tl.innerHTML=html+`</div>`; hydrate(tl);
+}
+$("timeline").addEventListener("click",ev=>{ const b=ev.target.closest(".ev"); if(b) openDetail(b.dataset.id); });
+
+/* ---------- Horizontal track ---------- */
+let ppy=prefs.ppy||null, geo=null, trackItems=[], scaled=new Set(), zoomMin=4, zoomMax=2400;
+const wrapEl=$("trackWrap");
+const trackIO = "IntersectionObserver" in window ? new IntersectionObserver(es=>es.forEach(e=>{ if(e.isIntersecting){ trackIO.unobserve(e.target); fillImg(e.target); } }),{root:wrapEl,rootMargin:"0px 900px"}) : null;
+const X = t => geo.M+(t-geo.y0)*geo.ppy;
+function centerTime(){ return geo ? geo.y0+(wrapEl.scrollLeft+wrapEl.clientWidth/2-geo.M)/geo.ppy : null; }
+
+function layoutTrack(keepTime){
+  const tr=$("track");
+  if(keepTime===undefined) keepTime=centerTime();
+  scaled=new Set();
+  const eras=sortedEras();
+  if(!visible.length && !eras.length){ tr.innerHTML=""; tr.style.width="100%"; tr.style.height="0px"; $("trackEmpty").hidden=false; if(mode==="shared") $("trackEmpty").innerHTML="<h3>Nothing to show</h3>This timeline doesn't have any events yet."; trackItems=[]; geo=null; $("overview").innerHTML=""; $("zHint").textContent=""; return; }
+  $("trackEmpty").hidden=true;
+  const narrow=innerWidth<640;
+  // Era name rows sit across the top; overlapping eras stack into extra rows
+  const CW=narrow?140:176, CH=narrow?104:118, GAP=30, PITCH=CH+18, L=narrow?1:2;
+  const ts=visible.map(e=>tval(e.date));
+  const allT=[...ts, ...visible.filter(e=>e.end).map(e=>tEnd(e.end)-1e-6), ...eras.flatMap(e=>[eraStart(e), eraEnd(e)-1e-6])];
+  const y0=Math.floor(Math.min(...allT)), y1=Math.floor(Math.max(...allT))+1, span=y1-y0;
+  const vw=wrapEl.clientWidth||1000, M=CW+20;
+  const fit=(vw-2*M)/span;
+  zoomMin=Math.max(3,Math.min(fit,80)); zoomMax=2400;
+  if(ppy==null) ppy=Math.min(420,Math.max(fit,vw/14));
+  ppy=clamp(ppy,zoomMin,zoomMax);
+  // Era name rows across the top. An era goes on the first row where its whole label fits
+  // (the band's width, or the name's width if that is longer); overlapping eras stack one above the other.
+  const eraRows=[];
+  eras.forEach(e=>{
+    const a=M+(eraStart(e)-y0)*ppy, b=M+(eraEnd(e)-y0)*ppy;
+    const textW=labelWidth(e.name), w=Math.max(4,b-a), lw=Math.max(w,textW);
+    e._showDate = w >= textW + dateWidth(fmtSpan(e)) + 6;
+    let r=eraRows.findIndex(row=>row.every(([p,q])=>a>=q+4||a+lw<=p-4));
+    if(r<0){ r=eraRows.length; eraRows.push([]); }
+    eraRows[r].push([a,a+lw]); e._row=r; e._lw=lw;
+  });
+  const ER=eraRows.length, ERH=26, ETOP=10, ERAH = ER ? ETOP+ER*ERH+6 : 0, PAD=(narrow?52:70)+ERAH;
+  const W=Math.round(2*M+span*ppy), axisY=PAD+CH+(L-1)*PITCH+GAP, H=2*axisY-ERAH;
+  geo={y0,y1,M,W,H,axisY,CW,ppy};
+  tr.style.width=W+"px"; tr.style.height=H+"px";
+
+  // Lanes nearest the axis first, alternating above and below; most important events claim space first
+  const lanes=[]; for(let k=1;k<=L;k++) lanes.push({side:"up",k,iv:[]},{side:"down",k,iv:[]});
+  const items=visible.map((e,i)=>({e,x:X(ts[i]),pri:priority(e)}));
+  [...items].sort((a,b)=>b.pri-a.pri||a.x-b.x).forEach(it=>{
+    const a=it.x-CW/2-8, b=it.x+CW/2+8;
+    for(const ln of lanes){ if(ln.iv.every(([p,q])=>b<p||a>q)){ ln.iv.push([a,b]); it.lane=ln; break; } }
+  });
+
+  const birth=birthYear();
+  let h="";
+  for(let y=y0;y<y1;y++) if(y%2) h+=`<div class="stripe" style="left:${X(y)}px;width:${ppy}px"></div>`;
+  for(const e of eras){
+    const a=X(eraStart(e)), b=X(eraEnd(e)), top=ETOP+e._row*ERH, w=Math.max(4,b-a);
+    h+=`<div class="era-band${e.end?"":" open"}" style="${eraVars(e)};left:${a}px;width:${w}px;top:${top}px"></div>`;
+    const lw=e._lw;
+    h+=`<button class="era-lab" data-era="${e.id}" style="${eraVars(e)};left:${a}px;top:${top}px;width:${lw}px" title="${esc(e.name+" · "+fmtSpan(e))}" aria-label="${esc("Era: "+e.name+", "+fmtSpan(e))}"><span>${esc(e.name)}</span>${e._showDate?`<small>${esc(fmtSpan(e))}</small>`:""}</button>`;
+  }
+  h+=`<div class="axis" style="top:${axisY-1}px"></div>`;
+  const step = ppy<14?10: ppy<32?5: ppy<60?2: 1;
+  for(let y=y0;y<=y1;y++){
+    h+=`<div class="tk" style="left:${X(y)}px;top:${axisY}px"></div>`;
+    if(ppy>=300 && y<y1) for(let m=1;m<12;m++) h+=`<div class="tk m" style="left:${X(y+m/12)}px;top:${axisY}px"></div>`;
+    if(ppy>=720 && y<y1) for(let m=0;m<12;m++) if(m) h+=`<div class="ml" style="left:${X(y+(m+0.5)/12)}px;top:${axisY+6}px">${MONTHS[m]}</div>`;
+  }
+  for(let y=Math.ceil(y0/step)*step;y<=y1;y+=step){
+    const age = birth && y>birth && ppy>=40 ? `<small>${y-birth}</small>` : "";
+    h+=`<div class="yl${y%10===0?" dec":""}" style="left:${X(y)}px;top:${axisY}px">${y}${age}</div>`;
+  }
+  for(const it of items){
+    const e=it.e; if(!e.end) continue;
+    const a=X(tStart(e.date)), b=X(tEnd(e.end)), w=b-a;
+    if(w>=3) h+=`<i class="span-bar" style="--cc:var(--c-${e.cat});left:${a}px;width:${w}px;top:${axisY}px"></i>`;
+  }
+  let dots=0;
+  for(const it of items){
+    const e=it.e, x=it.x, cc=`--cc:var(--c-${e.cat})`;
+    if(it.lane){
+      const {side,k}=it.lane;
+      const edge = side==="up" ? axisY-GAP-(k-1)*PITCH : axisY+GAP+(k-1)*PITCH;
+      h+= side==="up" ? `<i class="stem" style="${cc};left:${x}px;top:${edge}px;height:${axisY-edge}px"></i>`
+                      : `<i class="stem" style="${cc};left:${x}px;top:${axisY}px;height:${edge-axisY}px"></i>`;
+      h+=`<i class="pin" style="${cc};left:${x}px;top:${axisY}px"></i>`;
+      const ph=e.photos&&e.photos[0];
+      const pos = side==="up" ? `bottom:${H-edge}px` : `top:${edge}px`;
+      h+=`<button class="tc ${side}${ph?" hasimg":""}" data-id="${e.id}" data-x="${x}" style="${cc};left:${x-CW/2}px;${pos};width:${CW}px;max-height:${CH}px" aria-label="${esc(fmtRange(e)+": "+e.title)}">${ph?`<img alt="" data-src="${ph}">`:""}<span class="tb"><span class="tm"><i></i>${fmtRange(e)}${!e.end&&e.photos&&e.photos.length>1?` · ${e.photos.length} photos`:""}</span><span class="tt">${esc(e.title)}</span></span></button>`;
+    } else {
+      dots++;
+      h+=`<button class="dot" data-id="${e.id}" data-x="${x}" style="${cc};left:${x}px;top:${axisY}px" title="${esc(fmtRange(e)+" · "+e.title)}" aria-label="${esc(fmtRange(e)+": "+e.title)}"></button>`;
+    }
+  }
+  tr.innerHTML=h;
+  eraLabs=[...tr.querySelectorAll(".era-lab")].map(el=>({el,span:el.firstElementChild,a:parseFloat(el.style.left),w:parseFloat(el.style.width)}));
+  trackItems=[...tr.querySelectorAll(".tc,.dot")].map(el=>({el,x:+el.dataset.x,dot:el.classList.contains("dot")})).sort((a,b)=>a.x-b.x);
+  hydrate(tr,trackIO);
+  $("zHint").textContent = dots ? `${dots} more event${dots>1?"s are":" is"} shown as dots on the line. Zoom in to open them up, or click a dot.` : "Drag or scroll sideways. Events grow as you pass over them.";
+  $("zRange").value = Math.round(1000*Math.log(ppy/zoomMin)/Math.log(zoomMax/zoomMin));
+  wrapEl.scrollLeft = keepTime!=null ? X(keepTime)-wrapEl.clientWidth/2 : 0;
+  renderOverview(); restoreMagnify(); pinEraLabels();
+}
+/* Keep each era's name in view while you scroll through a long era */
+let eraLabs=[];
+function pinEraLabels(){
+  const s=wrapEl.scrollLeft;
+  for(const l of eraLabs){
+    const room=l.w-l.span.offsetWidth-(l.span.nextElementSibling?l.span.nextElementSibling.offsetWidth+6:0)-16;
+    const dx=clamp(s+8-l.a,0,Math.max(0,room));
+    l.el.style.paddingLeft=(8+dx)+"px";
+  }
+}
+function focusEra(id){
+  const e=state.eras.find(x=>x.id===id); if(!e) return;
+  if(view!=="track"){ view="track"; prefs.view=view; savePrefs(); render(); }
+  const a=eraStart(e), b=eraEnd(e), vw=wrapEl.clientWidth;
+  ppy=clamp((vw*0.8)/Math.max(b-a,1/12),zoomMin,zoomMax); prefs.ppy=ppy; savePrefs();
+  layoutTrack(null);
+  wrapEl.scrollLeft = X((a+b)/2)-vw/2;
+  updateOvWin(); pinEraLabels();
+}
+
+/* Magnify: a smooth bump centred on the pointer, or the middle of the screen on touch */
+const MAXS=1.6, R=150;
+let lastClientX=null, overTrack=false;
+const noHover = matchMedia("(hover: none)").matches;
+function magnifyAt(px){
+  const reach=R*2.6, next=new Set();
+  let lo=0, hi=trackItems.length;
+  while(lo<hi){ const mid=(lo+hi)>>1; if(trackItems[mid].x<px-reach) lo=mid+1; else hi=mid; }
+  for(let i=lo;i<trackItems.length&&trackItems[i].x<=px+reach;i++){
+    const it=trackItems[i], d=Math.abs(it.x-px), s=1+(it.dot?1.3:MAXS-1)*Math.exp(-((d/R)**2));
+    it.el.style.setProperty("--s",s.toFixed(3)); it.el.style.zIndex=String(6+Math.round(s*40)); next.add(it);
+  }
+  for(const it of scaled) if(!next.has(it)){ it.el.style.removeProperty("--s"); it.el.style.zIndex=""; }
+  scaled=next;
+}
+function clearMagnify(){ for(const it of scaled){ it.el.style.removeProperty("--s"); it.el.style.zIndex=""; } scaled=new Set(); }
+let rafM=0;
+function restoreMagnify(){
+  cancelAnimationFrame(rafM);
+  rafM=requestAnimationFrame(()=>{
+    if(overTrack && lastClientX!=null) magnifyAt(lastClientX-wrapEl.getBoundingClientRect().left+wrapEl.scrollLeft);
+    else if(noHover) magnifyAt(wrapEl.scrollLeft+wrapEl.clientWidth/2);
+    else clearMagnify();
+  });
+}
+let drag=null, justDragged=false;
+wrapEl.addEventListener("pointerdown",e=>{ if(e.pointerType!=="mouse"||e.button!==0) return; drag={x:e.clientX,s:wrapEl.scrollLeft,moved:false}; });
+window.addEventListener("pointermove",e=>{
+  if(!drag) return; const dx=e.clientX-drag.x;
+  if(Math.abs(dx)>4){ drag.moved=true; wrapEl.classList.add("dragging"); }
+  if(drag.moved) wrapEl.scrollLeft=drag.s-dx;
+});
+window.addEventListener("pointerup",()=>{ if(drag&&drag.moved){ justDragged=true; setTimeout(()=>justDragged=false,0); } drag=null; wrapEl.classList.remove("dragging"); });
+wrapEl.addEventListener("pointermove",e=>{ if(e.pointerType!=="mouse") return; overTrack=true; lastClientX=e.clientX; restoreMagnify(); });
+wrapEl.addEventListener("pointerleave",e=>{ if(e.pointerType!=="mouse") return; overTrack=false; restoreMagnify(); });
+wrapEl.addEventListener("scroll",()=>{ restoreMagnify(); updateOvWin(); pinEraLabels(); },{passive:true});
+wrapEl.addEventListener("wheel",e=>{
+  if(e.ctrlKey){ e.preventDefault(); zoomTo(ppy*Math.exp(-e.deltaY*0.0025), e.clientX); return; }
+  if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ e.preventDefault(); wrapEl.scrollLeft+=e.deltaY; }
+},{passive:false});
+wrapEl.addEventListener("keydown",e=>{
+  if(e.target!==wrapEl) return;
+  if(e.key==="ArrowRight"){ wrapEl.scrollLeft+=120; e.preventDefault(); }
+  if(e.key==="ArrowLeft"){ wrapEl.scrollLeft-=120; e.preventDefault(); }
+});
+wrapEl.addEventListener("focusin",e=>{ const t=e.target.closest(".tc,.dot"); if(t){ overTrack=false; magnifyAt(+t.dataset.x); } });
+wrapEl.addEventListener("click",e=>{
+  if(justDragged){ e.preventDefault(); return; }
+  const er=e.target.closest(".era-lab"); if(er){ focusEra(er.dataset.era); return; }
+  const t=e.target.closest(".tc,.dot"); if(t) openDetail(t.dataset.id);
+});
+function zoomTo(newPpy, anchorClientX){
+  if(!geo) return;
+  const ax = anchorClientX==null ? wrapEl.clientWidth/2 : anchorClientX-wrapEl.getBoundingClientRect().left;
+  const t = geo.y0+(wrapEl.scrollLeft+ax-geo.M)/geo.ppy;
+  ppy=clamp(newPpy,zoomMin,zoomMax); prefs.ppy=ppy; savePrefs();
+  layoutTrack(null);
+  wrapEl.scrollLeft = X(t)-ax;
+  updateOvWin(); restoreMagnify();
+}
+$("zIn").addEventListener("click",()=>zoomTo(ppy*1.5));
+$("zOut").addEventListener("click",()=>zoomTo(ppy/1.5));
+$("zFit").addEventListener("click",()=>{ ppy=zoomMin; prefs.ppy=null; savePrefs(); layoutTrack(null); });
+$("zRange").addEventListener("input",e=>zoomTo(zoomMin*Math.pow(zoomMax/zoomMin,+e.target.value/1000)));
+let rsT; addEventListener("resize",()=>{ clearTimeout(rsT); rsT=setTimeout(()=>{ if(view==="track") layoutTrack(); },150); });
+
+/* Overview strip: the whole life at a glance; click or drag to jump */
+function renderOverview(){
+  const ov=$("overview"); if(!geo){ ov.innerHTML=""; return; }
+  const span=geo.y1-geo.y0, counts=new Array(span).fill(0);
+  visible.forEach(e=>{ const i=+e.date.slice(0,4)-geo.y0; if(i>=0&&i<span) counts[i]++; });
+  const max=Math.max(1,...counts), lab=span>60?20:span>24?10:span>10?5:1;
+  let h=sortedEras().map(e=>{ const a=(eraStart(e)-geo.y0)/span, b=(eraEnd(e)-geo.y0)/span; return `<div class="ov-era" style="left:${a*100}%;width:${Math.max(.3,(b-a)*100)}%;background:${e.color}"></div>`; }).join("");
+  h+=counts.map((c,i)=>c?`<div class="ov-bar" style="left:${i/span*100}%;width:calc(${100/span}% - 1px);height:${Math.max(3,c/max*24)}px"></div>`:"").join("");
+  for(let y=Math.ceil(geo.y0/lab)*lab;y<geo.y1;y+=lab) h+=`<div class="ov-lab" style="left:${(y-geo.y0+.5)/span*100}%">${y}</div>`;
+  ov.innerHTML=h+`<div class="ov-win" id="ovWin"></div>`; updateOvWin();
+}
+function updateOvWin(){
+  const win=$("ovWin"); if(!win||!geo) return;
+  const toF=px=>(px-geo.M)/geo.ppy/(geo.y1-geo.y0);
+  const a=clamp(toF(wrapEl.scrollLeft),0,1), b=clamp(toF(wrapEl.scrollLeft+wrapEl.clientWidth),0,1);
+  win.style.left=(a*100)+"%"; win.style.width=Math.max(1,(b-a)*100)+"%";
+}
+(function(){
+  const ov=$("overview"); let on=false;
+  const go=e=>{ if(!geo) return; const r=ov.getBoundingClientRect(); const f=clamp((e.clientX-r.left)/r.width,0,1);
+    wrapEl.scrollLeft = geo.M+f*(geo.y1-geo.y0)*geo.ppy - wrapEl.clientWidth/2; };
+  ov.addEventListener("pointerdown",e=>{ on=true; try{ov.setPointerCapture(e.pointerId);}catch(_){} go(e); });
+  ov.addEventListener("pointermove",e=>{ if(on) go(e); });
+  ov.addEventListener("pointerup",()=>on=false); ov.addEventListener("pointercancel",()=>on=false);
+})();
+
+/* ---------- Detail sheet ---------- */
+let detailId=null, detailPhoto=0;
+function lock(){ document.body.classList.add("locked"); }
+function unlockIfClear(){ if($("detail").hidden&&$("drawer").hidden&&$("lb").hidden&&$("auth").hidden) document.body.classList.remove("locked"); }
+function openDetail(id){ detailId=id; detailPhoto=0; $("detail").hidden=false; lock(); drawDetail(); $("dClose").focus(); }
+function closeDetail(){ $("detail").hidden=true; detailId=null; armReset($("dDel"),"Delete"); unlockIfClear(); }
+function drawDetail(){
+  const e=state.entries.find(x=>x.id===detailId); if(!e) return closeDetail();
+  const i=visible.findIndex(x=>x.id===e.id);
+  $("dPrev").disabled=i<=0; $("dNext").disabled=i<0||i>=visible.length-1;
+  $("dPos").textContent = i>=0 ? `${i+1} of ${visible.length}` : "";
+  const photos=e.photos||[];
+  $("dMain").classList.toggle("noimg",!photos.length);
+  $("dMedia").hidden=!photos.length;
+  $("dMedia").innerHTML = photos.length ? `<button class="big" id="dBig" aria-label="Open photo full screen"><img alt="${esc(e.title)}" data-src="${photos[detailPhoto]}"></button>${photos.length>1?`<div class="strip">${photos.map((p,k)=>`<button data-k="${k}" aria-current="${k===detailPhoto}" aria-label="Photo ${k+1}"><img alt="" data-src="${p}"></button>`).join("")}</div>`:""}` : "";
+  hydrate($("dMedia"),null);
+  const birth=birthYear(), y=+e.date.slice(0,4);
+  const src=e.src==="facebook"?"From Facebook":e.src==="sheet"?"From spreadsheet":"";
+  $("dBody").style.setProperty("--cc",`var(--c-${e.cat})`);
+  $("dBody").innerHTML=`<div class="yr">${y}</div><div class="when">${fmtRange(e)}${e.end?` · ${duration(e)}`:""}${birth&&y>birth?` · age ${y-birth}`:""}</div>
+    <h2 id="dTitle">${esc(e.title)}</h2>
+    ${erasAt(tval(e.date)).length?`<div class="tags">${erasAt(tval(e.date)).map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</div>`:""}
+    <div class="tags"><span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src?`<span class="src">${src}</span>`:""}${e.videos?`<span>${e.videos} video${e.videos>1?"s":""} not imported</span>`:""}</div>
+    ${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}`;
+}
+$("dMedia").addEventListener("click",ev=>{
+  const k=ev.target.closest("button[data-k]"); if(k){ detailPhoto=+k.dataset.k; drawDetail(); return; }
+  if(ev.target.closest("#dBig")){ const e=state.entries.find(x=>x.id===detailId); openLb(e.id,e.photos[detailPhoto]); }
+});
+function stepDetail(d){
+  const i=visible.findIndex(x=>x.id===detailId); const n=visible[i+d]; if(!n) return;
+  detailId=n.id; detailPhoto=0; drawDetail();
+  if(view==="track"&&geo) wrapEl.scrollLeft=X(tval(n.date))-wrapEl.clientWidth/2;
+}
+$("dPrev").addEventListener("click",()=>stepDetail(-1));
+$("dNext").addEventListener("click",()=>stepDetail(1));
+$("dClose").addEventListener("click",closeDetail);
+$("detail").addEventListener("click",e=>{ if(e.target===$("detail")) closeDetail(); });
+$("dEdit").addEventListener("click",()=>{ const id=detailId; closeDetail(); openDrawer("add"); startEdit(id); });
+function arm(btn,label,armedLabel,fn){
+  if(!btn.classList.contains("armed")){ btn.classList.add("armed"); btn.textContent=armedLabel; clearTimeout(btn._t); btn._t=setTimeout(()=>armReset(btn,label),3500); return; }
+  armReset(btn,label); fn();
+}
+function armReset(btn,label){ clearTimeout(btn._t); btn.classList.remove("armed"); btn.textContent=label; }
+$("dDel").addEventListener("click",ev=>{ if(!state.sample && !needAccount()) return; arm(ev.currentTarget,"Delete","Click again to delete",()=>{
+  const gone=state.entries.find(e=>e.id===detailId); if(!gone) return;
+  const i=visible.findIndex(x=>x.id===detailId);
+  if(state.sample){ state.entries=state.entries.filter(e=>e!==gone); }
+  else { delPhotos(gone.photos); state.entries=state.entries.filter(e=>e!==gone); save(); }
+  render(); toast("Deleted");
+  const n=visible[i]||visible[i-1]; if(n){ detailId=n.id; detailPhoto=0; drawDetail(); } else closeDetail();
+}); });
+
+/* ---------- Drawer & manual form ---------- */
+function openDrawer(p){ if(!needAccount()) return; $("drawer").hidden=false; lock(); showTab(p||"add"); }
+function closeDrawer(){ $("drawer").hidden=true; if(editingId) endEdit(); unlockIfClear(); }
+$("openDrawer").addEventListener("click",()=>openDrawer("add"));
+$("drClose").addEventListener("click",closeDrawer);
+$("drawer").addEventListener("click",e=>{ if(e.target===$("drawer")) closeDrawer(); });
+document.querySelectorAll(".tabs button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.pane)));
+function showTab(p){
+  document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected", b.dataset.pane===p));
+  ["add","eras","sheet","fb","data"].forEach(k=>$("pane-"+k).hidden = k!==p);
+  if(p==="eras") renderEraList();
+  if(p==="fb"){ showResume(); updateFixCard(); }
+}
+
+/* ---------- Eras ---------- */
+let eraEditing=null, eraColor=ERA_COLORS[0];
+let _measure=null;
+function labelWidth(name){
+  if(!_measure){ _measure=document.createElement("canvas").getContext("2d"); }
+  _measure.font='700 12.5px "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif';
+  return Math.ceil(_measure.measureText(name).width)+24;
+}
+function dateWidth(t){
+  if(!_measure){ _measure=document.createElement("canvas").getContext("2d"); }
+  _measure.font='500 10px "JetBrains Mono", ui-monospace, Menlo, monospace';
+  return Math.ceil(_measure.measureText(t).width)+6;
+}
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>{ if(view==="track") layoutTrack(); });
+function sortedEras(){ return [...(state.eras||[])].sort((a,b)=>eraStart(a)-eraStart(b)||eraEnd(b)-eraEnd(a)); }
+["eSM","eEM"].forEach(id=>MONTHS.forEach((m,i)=>$(id).insertAdjacentHTML("beforeend",`<option value="${i+1}">${m}</option>`)));
+function renderSwatches(){
+  const custom=!ERA_COLORS.includes(eraColor);
+  $("eSwatches").innerHTML=ERA_COLORS.map(c=>`<button type="button" class="sw" data-c="${c}" style="--sc:${c}" aria-pressed="${c===eraColor}" aria-label="Color ${c}"></button>`).join("")
+    + `<input type="color" id="eCustom" value="${eraColor}" aria-label="Pick any color" title="Pick any color"${custom?' style="outline:2px solid var(--ink);outline-offset:1px"':""}>`;
+}
+$("eSwatches").addEventListener("click",e=>{ const b=e.target.closest(".sw"); if(b){ eraColor=b.dataset.c; renderSwatches(); } });
+$("eSwatches").addEventListener("input",e=>{ if(e.target.id==="eCustom"){ eraColor=e.target.value.toUpperCase(); $("eSwatches").querySelectorAll(".sw").forEach(s=>s.setAttribute("aria-pressed","false")); e.target.style.outline="2px solid var(--ink)"; } });
+function nextColor(){ const used=new Set(state.eras.map(e=>e.color)); return ERA_COLORS.find(c=>!used.has(c))||ERA_COLORS[state.eras.length%ERA_COLORS.length]; }
+function eraMsg(t,err){ const el=$("eraMsg"); el.hidden=!t; el.className=err?"msg err":"msg"; el.textContent=t||""; }
+function renderEraList(){
+  const list=sortedEras();
+  $("eraList").innerHTML = list.length ? list.map(e=>`<div class="era-row" style="${eraVars(e)}"><i></i><span><b>${esc(e.name)}</b><span class="d">${esc(fmtSpan(e))} · ${eraYears(e)}</span></span>
+    <span class="btns"><button type="button" class="btn sm" data-eact="show" data-id="${e.id}">Show</button><button type="button" class="btn sm" data-eact="edit" data-id="${e.id}">Edit</button><button type="button" class="btn sm danger" data-eact="del" data-id="${e.id}">Delete</button></span></div>`).join("")
+    : `<div class="era-row"><span></span><span class="hint">No eras yet. Add one above, for example college, a job, or the years in a house.</span><span></span></div>`;
+  if(!eraEditing){ eraColor=nextColor(); renderSwatches(); }
+}
+$("eraList").addEventListener("click",ev=>{
+  const b=ev.target.closest("button[data-eact]"); if(!b) return;
+  const id=b.dataset.id, act=b.dataset.eact;
+  if(act==="show"){ closeDrawer(); focusEra(id); }
+  if(act==="edit") startEraEdit(id);
+  if(act==="del") arm(b,"Delete","Confirm",()=>{
+    state.eras=state.eras.filter(e=>e.id!==id); if(!state.sample) save();
+    if(eraEditing===id) endEraEdit();
+    render(); renderEraList(); toast("Era deleted");
+  });
+});
+function startEraEdit(id){
+  const e=state.eras.find(x=>x.id===id); if(!e) return;
+  eraEditing=id; const [sy,sm]=e.start.split("-"); const [ey,em]=(e.end||"").split("-");
+  $("eName").value=e.name; $("eSY").value=sy; $("eSM").value=sm?+sm:""; $("eEY").value=ey||""; $("eEM").value=em?+em:"";
+  eraColor=e.color; renderSwatches();
+  $("eraFormTitle").textContent="Edit era"; $("eSubmit").textContent="Save era"; $("eCancel").hidden=false; $("eName").focus();
+}
+function endEraEdit(){
+  eraEditing=null; ["eName","eSY","eEY"].forEach(i=>$(i).value=""); $("eSM").value=""; $("eEM").value="";
+  $("eraFormTitle").textContent="Add an era"; $("eSubmit").textContent="Add era"; $("eCancel").hidden=true; eraMsg("");
+  eraColor=nextColor(); renderSwatches();
+}
+$("eCancel").addEventListener("click",endEraEdit);
+$("pane-eras").addEventListener("submit",ev=>{
+  ev.preventDefault();
+  const name=$("eName").value.trim(); if(!name) return eraMsg("Give the era a name, like Texas Tech or College.",true);
+  const start=mk($("eSY").value,$("eSM").value); if(!start) return eraMsg("Enter the year the era started, like 2002.",true);
+  let end="";
+  if($("eEY").value){ end=mk($("eEY").value,$("eEM").value); if(!end) return eraMsg("Enter a four-digit end year, or leave it blank if the era is still going.",true); }
+  else if($("eEM").value) return eraMsg("Add an end year to go with the end month, or clear the month.",true);
+  const rec={name,start,end,color:eraColor};
+  if(end && eraEnd(rec)<=eraStart(rec)) return eraMsg("The end has to come after the start.",true);
+  const wasEditing=eraEditing;
+  if(state.sample) dropSample();
+  if(wasEditing && state.eras.some(e=>e.id===wasEditing)) Object.assign(state.eras.find(e=>e.id===wasEditing),rec);
+  else state.eras.push({id:uid(),...rec});
+  save(); endEraEdit(); render(); renderEraList();
+  toast(wasEditing?"Era saved":`Added the era “${name}”`);
+});
+["fMonth","fEMonth"].forEach(id=>MONTHS.forEach((m,i)=>$(id).insertAdjacentHTML("beforeend",`<option value="${i+1}">${m}</option>`)));
+function readEnd(){
+  if(!$("fMulti").checked) return {end:""};
+  const ey=$("fEYear").value||$("fYear").value, em=$("fEMonth").value, ed=$("fEDay").value;
+  if(!$("fEYear").value && !em && !ed) return {end:""};
+  if(ed && !em) return {err:"Pick an end month to go with the end day, or clear the day."};
+  const end=mk(ey,em,ed); if(!end) return {err:"Enter a four-digit end year, like 2014."};
+  return {end};
+}
+function updateDur(){
+  const start=mk($("fYear").value,$("fMonth").value,$("fDay").value), r=readEnd();
+  const el=$("fDur");
+  if(!start||!r.end||r.err){ el.textContent="Leave the end year blank if it's the same as the start year."; return; }
+  const e={date:start,end:r.end};
+  el.textContent = tEnd(r.end)<=tStart(start) ? "The end date comes before the start date." : `${fmtRange(e)} · ${duration(e)}`;
+}
+$("fMulti").addEventListener("change",()=>{
+  $("fEndWrap").hidden=!$("fMulti").checked;
+  if($("fMulti").checked && !$("fEMonth").value && $("fMonth").value) $("fEMonth").value=$("fMonth").value;
+  updateDur(); if($("fMulti").checked) $("fEDay").focus();
+});
+["fYear","fMonth","fDay","fEYear","fEMonth","fEDay"].forEach(id=>$(id).addEventListener("input",updateDur));
+CATS.forEach(([k,l])=>$("fCat").insertAdjacentHTML("beforeend",`<option value="${k}">${l}</option>`));
+$("fCat").value="milestone";
+function formMsg(t,err){ const el=$("formMsg"); el.hidden=!t; el.className=err?"msg err":"msg"; el.textContent=t||""; }
+$("pane-add").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  const y=$("fYear").value, m=$("fMonth").value, d=$("fDay").value;
+  if(d && !m) return formMsg("Pick a month to go with the day, or clear the day.",true);
+  const date=mk(y,m,d); if(!date) return formMsg("Enter a four-digit year, like 1998.",true);
+  const r=readEnd(); if(r.err) return formMsg(r.err,true);
+  let end=r.end;
+  if(end && tEnd(end)<=tStart(date)) return formMsg("The end date has to come after the start date.",true);
+  if(end===date) end="";
+  const title=$("fTitle").value.trim(); if(!title) return formMsg("Describe what happened in a few words.",true);
+  const btn=$("fSubmit"); btn.disabled=true;
+  const wasSample=state.sample;
+  if(wasSample && !editingId) dropSample();
+  const photos=[];
+  for(const p of formPhotos){ photos.push(p.id || await putPhoto(await shrink(p.file))); if(p.url) URL.revokeObjectURL(p.url); }
+  btn.disabled=false;
+  const rec={date,end,title,cat:$("fCat").value,place:$("fPlace").value.trim(),desc:$("fDesc").value.trim(),photos};
+  if(editingId){
+    const e=state.entries.find(x=>x.id===editingId);
+    if(state.sample){ dropSample(); state.entries.push({...e,...rec,id:uid()}); } else if(e) Object.assign(e,rec);
+    delPhotos(removedPhotos); save(); render(); endEdit(); toast("Saved"); closeDrawer();
+  } else { addEntries([rec]); toast(`Added “${title}”`); }
+  ["fDay","fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
+  $("fTitle").focus();
+});
+$("fPhotos").addEventListener("change",ev=>{ [...ev.target.files].forEach(f=>formPhotos.push({file:f,url:URL.createObjectURL(f)})); ev.target.value=""; renderStrip(); });
+function renderStrip(){
+  const s=$("fStrip");
+  s.innerHTML=formPhotos.map((p,i)=>`<figure><img alt="" ${p.url?`src="${p.url}"`:`data-src="${p.id}"`}><button type="button" class="x" data-i="${i}" aria-label="Remove photo">×</button></figure>`).join("");
+  s.querySelectorAll("img[data-src]").forEach(fillImg);
+}
+$("fStrip").addEventListener("click",ev=>{
+  const b=ev.target.closest("button[data-i]"); if(!b) return;
+  const [p]=formPhotos.splice(+b.dataset.i,1); if(p.url) URL.revokeObjectURL(p.url); if(p.id) removedPhotos.push(p.id); renderStrip();
+});
+function startEdit(id){
+  const e=state.entries.find(x=>x.id===id); if(!e) return;
+  editingId=id; const [y,m,d]=e.date.split("-");
+  $("fYear").value=y; $("fMonth").value=m?+m:""; $("fDay").value=d?+d:"";
+  const [ey,em,ed]=(e.end||"").split("-");
+  $("fMulti").checked=!!e.end; $("fEndWrap").hidden=!e.end;
+  $("fEYear").value=e.end?ey:""; $("fEMonth").value=em?+em:""; $("fEDay").value=ed?+ed:""; updateDur();
+  $("fTitle").value=e.title; $("fCat").value=e.cat; $("fPlace").value=e.place||""; $("fDesc").value=e.desc||"";
+  formPhotos=(e.photos||[]).map(id=>({id})); removedPhotos=[]; renderStrip();
+  $("formTitle").textContent="Edit event"; $("fSubmit").textContent="Save changes"; $("fCancel").hidden=false; $("fTitle").focus();
+}
+function endEdit(){
+  editingId=null; $("formTitle").textContent="Add an event"; $("fSubmit").textContent="Add to timeline"; $("fCancel").hidden=true;
+  ["fYear","fDay","fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fMonth").value=""; $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true;
+  formPhotos.forEach(p=>p.url&&URL.revokeObjectURL(p.url)); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
+}
+$("fCancel").addEventListener("click",endEdit);
+
+/* ---------- Toolbar ---------- */
+$("chips").addEventListener("click",ev=>{ const c=ev.target.closest(".chip"); if(!c) return;
+  if(c.id==="addEraChip"){ openDrawer("eras"); $("eName").focus(); return; }
+  if(c.dataset.era){ focusEra(c.dataset.era); return; }
+  const k=c.dataset.cat; filters.has(k)?filters.delete(k):filters.add(k); render(); });
+let sT; $("search").addEventListener("input",()=>{ clearTimeout(sT); sT=setTimeout(render,150); });
+$("vTrack").addEventListener("click",()=>{ view="track"; prefs.view=view; savePrefs(); render(); });
+$("vList").addEventListener("click",()=>{ view="list"; prefs.view=view; savePrefs(); render(); });
+$("personName").addEventListener("focus",e=>{ if(mode==="signedout"){ e.target.blur(); needAccount(); } });
+let nameT; $("personName").addEventListener("input",e=>{ if(mode!=="server") return; state.name=e.target.value; clearTimeout(nameT); nameT=setTimeout(()=>{ if(!state.sample) save(); },500); });
+$("clearSample").addEventListener("click",()=>{ if(!needAccount()) return; dropSample(); save(); render(); $("personName").focus(); });
+$("clearAll").addEventListener("click",ev=>arm(ev.currentTarget,"Clear everything","Click again to erase it all",()=>{
+  const ids=state.entries.flatMap(e=>e.photos||[]);
+  state={name:state.sample?"":state.name,entries:[],eras:[],sample:false};
+  delPhotos(ids); renderEraList(); save(); render(); toast("Timeline cleared");
+}));
+$("copyCsv").addEventListener("click",()=>{
+  const csv=csvText();
+  navigator.clipboard.writeText(csv).then(()=>toast(`Copied ${state.entries.length} events`))
+    .catch(()=>{ const t=document.createElement("textarea"); t.value=csv; document.body.appendChild(t); t.select(); try{document.execCommand("copy");toast("Copied");}catch(e){toast("This browser blocked copying");} t.remove(); });
+});
+
+/* ---------- Photo viewer ---------- */
+let lbList=[], lbI=0, lbTimer=null, lbLast=null;
+function openLb(entryId,photoId){
+  lbList=[]; visible.forEach(e=>(e.photos||[]).forEach(p=>lbList.push({p,e})));
+  if(!lbList.length) return;
+  lbI=Math.max(0,lbList.findIndex(x=>x.e.id===entryId&&x.p===photoId));
+  lbLast=document.activeElement; $("lb").hidden=false; lock(); showLb(); $("lbClose").focus();
+}
+async function showLb(){
+  const {p,e}=lbList[lbI];
+  $("lbCount").textContent=`${lbI+1} / ${lbList.length}`;
+  $("lbYear").textContent=e.date.slice(0,4); $("lbDate").textContent=fmtRange(e)+(e.place?` · ${e.place}`:"");
+  $("lbTitle").textContent=e.title; $("lbImg").alt=e.title;
+  const u=await photoURL(p); if(lbList[lbI]&&lbList[lbI].p===p) $("lbImg").src=u;
+  const nx=lbList[lbI+1]; if(nx) photoURL(nx.p);
+  $("lbPrev").hidden=lbI===0; $("lbNext").hidden=lbI===lbList.length-1;
+}
+function stepLb(d){ const n=lbI+d; if(n<0||n>=lbList.length){ if(lbTimer) togglePlay(); return; } lbI=n; showLb(); }
+function closeLb(){ if(lbTimer) togglePlay(); $("lb").hidden=true; $("lbImg").removeAttribute("src"); unlockIfClear(); if(lbLast) lbLast.focus(); }
+function togglePlay(){ if(lbTimer){ clearInterval(lbTimer); lbTimer=null; $("lbPlay").textContent="Play"; } else { lbTimer=setInterval(()=>stepLb(1),4000); $("lbPlay").textContent="Pause"; } }
+$("lbPrev").addEventListener("click",()=>stepLb(-1));
+$("lbNext").addEventListener("click",()=>stepLb(1));
+$("lbClose").addEventListener("click",closeLb);
+$("lbPlay").addEventListener("click",togglePlay);
+let tx0=null;
+$("lbStage").addEventListener("touchstart",e=>{ tx0=e.touches[0].clientX; },{passive:true});
+$("lbStage").addEventListener("touchend",e=>{ if(tx0==null) return; const dx=e.changedTouches[0].clientX-tx0; tx0=null; if(Math.abs(dx)>50) stepLb(dx<0?1:-1); });
+$("slideshow").addEventListener("click",()=>{ const f=visible.find(e=>e.photos&&e.photos.length); if(!f) return; openLb(f.id,f.photos[0]); if(!lbTimer) togglePlay(); });
+document.addEventListener("keydown",ev=>{
+  if(!$("lb").hidden){
+    if(ev.key==="Escape") closeLb(); else if(ev.key==="ArrowRight") stepLb(1); else if(ev.key==="ArrowLeft") stepLb(-1);
+    else if(ev.key===" "){ ev.preventDefault(); togglePlay(); } return;
+  }
+  if(!$("detail").hidden){
+    if(ev.key==="Escape") closeDetail(); else if(ev.key==="ArrowRight") stepDetail(1); else if(ev.key==="ArrowLeft") stepDetail(-1); return;
+  }
+  if(!$("drawer").hidden && ev.key==="Escape") closeDrawer();
+});
+
+/* ---------- File drop helpers ---------- */
+function wireDropMulti(dropId,inputId,handler){
+  const drop=$(dropId), inp=$(inputId);
+  inp.addEventListener("change",()=>{ const fs=[...inp.files]; inp.value=""; if(fs.length) handler(fs); });
+  ["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("over");}));
+  ["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("over");}));
+  drop.addEventListener("drop",e=>{ const fs=[...e.dataTransfer.files]; if(fs.length) handler(fs); });
+}
+function wireDrop(dropId,inputId,handler){
+  const drop=$(dropId), inp=$(inputId);
+  inp.addEventListener("change",()=>{ if(inp.files[0]) handler(inp.files[0]); inp.value=""; });
+  ["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("over");}));
+  ["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("over");}));
+  drop.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) handler(f); });
+}
+
+/* ---------- Spreadsheet ---------- */
+const FIELDS=[["end","End date",/^(end|to|until|through|thru|finish)|end ?date|date ?to|end$/],["date","Start date",/date|when|year|time|start|from/],["title","Title",/title|event|what|headline|name|milestone/],["desc","Description",/desc|detail|note|story|summary|text|comment/],["cat","Category",/categ|type|tag|kind|group/],["place","Place",/place|location|where|city|town/]];
+let sheet={headers:[],rows:[],map:{}};
+function guessCat(v){
+  const s=String(v||"").toLowerCase().trim(); if(!s) return "milestone";
+  for(const [k,l] of CATS) if(s===k||s===l.toLowerCase()) return k;
+  if(/school|college|grad|degree|class/.test(s)) return "education";
+  if(/job|work|career|promot|hire/.test(s)) return "work";
+  if(/wed|marri|born|baby|child|famil|kid/.test(s)) return "family";
+  if(/trip|travel|vacation|visit/.test(s)) return "travel";
+  if(/move|house|home|apartment/.test(s)) return "home";
+  if(/facebook|post/.test(s)) return "post";
+  return "other";
+}
+function sheetRowsToEntries(){
+  const m=sheet.map, out=[], bad=[];
+  sheet.rows.forEach((r,i)=>{
+    const get=k=> m[k]===""||m[k]==null ? "" : r[m[k]];
+    const date=parseDate(get("date")); const title=String(get("title")??"").trim();
+    if(!title && !String(get("date")??"").trim()) return;
+    let end=parseDate(get("end")); if(end && (!date || tEnd(end)<=tStart(date) || end===date)) end="";
+    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2};
+    (date?out:bad).push(rec);
+  });
+  return {out,bad};
+}
+function renderSheet(){
+  const ORDER=["date","end","title","desc","cat","place"];
+  $("sheetMap").innerHTML = [...FIELDS].sort((a,b)=>ORDER.indexOf(a[0])-ORDER.indexOf(b[0])).map(([k,l])=>`<label>${l}<select data-f="${k}" id="map-${k}"><option value="">(none)</option>${sheet.headers.map((h,i)=>`<option value="${i}" ${String(sheet.map[k])===String(i)?"selected":""}>${esc(h||"Column "+(i+1))}</option>`).join("")}</select></label>`).join("");
+  const {out,bad}=sheetRowsToEntries();
+  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${esc(e.title)}</span></div>`),
+    ...bad.slice(0,10).map(e=>`<div class="bad"><span class="d">Row ${e._row}</span><span class="t">Can't read date “${esc(e._raw)}”</span></div>`)].join("") || `<div><span class="t">No rows found under the header.</span></div>`;
+  $("sheetMsg").textContent = `${out.length} rows ready${bad.length?`, ${bad.length} skipped because the date couldn't be read`:""}.`;
+  $("sheetImport").textContent=`Add ${out.length} rows`; $("sheetImport").disabled=!out.length;
+}
+$("sheetMap").addEventListener("change",e=>{ sheet.map[e.target.dataset.f]=e.target.value; renderSheet(); });
+$("sheetImport").addEventListener("click",()=>{ const {out}=sheetRowsToEntries(); addEntries(out.map(({_raw,_row,...e})=>e)); toast(`Added ${out.length} events from the spreadsheet`); $("sheetResult").hidden=true; });
+wireDrop("sheetDrop","sheetFile",async f=>{
+  try{
+    if(typeof XLSX==="undefined") throw new Error("The spreadsheet reader didn't load. Check your connection and reload the page.");
+    const wb=XLSX.read(await f.arrayBuffer(),{type:"array",cellDates:true});
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
+    if(rows.length<2) throw new Error("That file needs a header row and at least one event row.");
+    sheet.headers=rows[0].map(h=>String(h).trim()); sheet.rows=rows.slice(1); sheet.map={};
+    const used=new Set();
+    FIELDS.forEach(([k,,re])=>{ const i=sheet.headers.findIndex((h,i)=>!used.has(i)&&re.test(h.toLowerCase())); if(i>=0){sheet.map[k]=i;used.add(i);} });
+    if(sheet.map.date==null) sheet.map.date=0;
+    if(sheet.map.title==null){ const i=sheet.headers.findIndex((h,i)=>!used.has(i)&&i!==sheet.map.date); if(i>=0) sheet.map.title=i; }
+    $("sheetResult").hidden=false; renderSheet();
+  }catch(err){ $("sheetResult").hidden=false; $("sheetMap").innerHTML=""; $("sheetPreview").innerHTML=""; $("sheetImport").disabled=true; $("sheetMsg").innerHTML=`<span class="msg err" style="display:block">${esc(err.message)}</span>`; }
+});
+
+/* ---------- Facebook: read the download ---------- */
+let fbZips=[], fbPosts=[], fbZip=null, zipIndex=null, fbCands=[], review=new Map(), aiCtl=null;
+let impSaved=null, impInfo=null, fbStopReq=false, fbAdding=false;
+const IMG_RE=/\.(jpe?g|png|gif|webp|bmp)$/i, VID_RE=/\.(mp4|mov|m4v|webm|avi)$/i;
+const fixFb = s => { if(typeof s!=="string") return s; try{ return decodeURIComponent(escape(s)); }catch(e){ return s; } };
+function findPostArray(j){
+  if(Array.isArray(j)) return j.filter(x=>x&&typeof x==="object"&&x.timestamp);
+  if(j&&typeof j==="object") for(const v of Object.values(j)){ if(Array.isArray(v)&&v.some(x=>x&&x.timestamp)) return v.filter(x=>x&&x.timestamp); }
+  return [];
+}
+function fbToEntry(p){
+  const d=new Date(p.timestamp*1000), date=mk(d.getFullYear(),d.getMonth()+1,d.getDate());
+  let text=""; (p.data||[]).forEach(x=>{ if(x.post) text=fixFb(x.post); });
+  let place="", mediaDesc="", link="", imgs=[], videos=0;
+  (p.attachments||[]).forEach(a=>(a.data||[]).forEach(x=>{
+    if(x.place&&x.place.name) place=fixFb(x.place.name);
+    if(x.media){ const u=x.media.uri||""; if(IMG_RE.test(u)) imgs.push(u); else if(VID_RE.test(u)) videos++; if(x.media.description&&!mediaDesc) mediaDesc=fixFb(x.media.description); }
+    if(x.external_context&&x.external_context.url) link=x.external_context.url;
+  }));
+  const label=fixFb(p.title||""), body=text||mediaDesc, firstLine=body.split(/\n/)[0], long=firstLine.length>90;
+  const title = body ? (long ? firstLine.slice(0,87).trimEnd()+"…" : firstLine) : (label || (imgs.length ? `Shared ${imgs.length} photo${imgs.length>1?"s":""}` : "Facebook post"));
+  return {date,title,body,label,link,place,imgs,videos,fbts:p.timestamp,hasContent:!!body||imgs.length>0};
+}
+function addZips(zips){ zips.forEach(z=>{ if(!fbZips.includes(z)) fbZips.push(z); }); buildIndex(); }
+function buildIndex(){
+  zipIndex=new Map();
+  fbZips.forEach(z=>Object.keys(z.files).forEach(k=>{ if(z.files[k].dir) return; const b=k.split("/").pop(); if(!zipIndex.has(b)) zipIndex.set(b,[]); zipIndex.get(b).push([z,k]); }));
+  fbZip=fbZips.length?fbZips[0]:null;
+}
+function zipFind(uri){
+  if(!fbZips.length||!uri) return null;
+  for(const z of fbZips){ const d=z.file(uri); if(d) return d; }
+  const c=zipIndex.get(uri.split("/").pop())||[]; const hit=c.find(([z,p])=>p.endsWith(uri))||c[0];
+  return hit?hit[0].file(hit[1]):null;
+}
+// Reads any mix of Facebook .zip parts and post .json files
+async function readFbFiles(files){
+  const raw=[], zips=[], seen=new Set(); let postFiles=0;
+  for(const f of files){
+    if(/\.zip$/i.test(f.name)){
+      if(typeof JSZip==="undefined") throw new Error("The .zip reader didn't load. Reload the page and try again.");
+      const zip=await JSZip.loadAsync(f); zips.push(zip);
+      const names=Object.keys(zip.files).filter(n=>/\.json$/i.test(n)&&/posts\//i.test(n)&&!/album|comment|other_people|edits|archive/i.test(n));
+      for(const n of names){ try{ raw.push(...findPostArray(JSON.parse(await zip.files[n].async("string")))); postFiles++; }catch(e){} }
+    } else if(/\.json$/i.test(f.name)){ raw.push(...findPostArray(JSON.parse(await f.text()))); postFiles++; }
+  }
+  const out=raw.filter(p=>{ const k=p.timestamp+"|"+JSON.stringify(p.data||"").slice(0,80); if(seen.has(k)) return false; seen.add(k); return true; });
+  return {raw:out, zips, postFiles};
+}
+function fbMsg(t,err){ $("fbMsg").innerHTML = err ? `<span class="msg err" style="display:block">${esc(t)}</span>` : esc(t); }
+function onTimeline(){ return new Set(state.entries.filter(e=>e.fbts).map(e=>e.fbts)); }
+function candidates(){ const from=+$("fbFrom").value||0, to=+$("fbTo").value||9999; return fbPosts.filter(e=>{ const y=+e.date.slice(0,4); return y>=from&&y<=to; }); }
+function needsClaude(){ return fbCands.filter(e=>{ const r=review.get(e.fbts); return !r||r.by!=="ai"; }); }
+function clearReviewUI(){ $("fbReview").hidden=true; $("fbFoot").hidden=true; $("aiProg").hidden=true; }
+
+/* ---------- Saved progress: kept in this browser so a long import can be finished later ---------- */
+const impKey=()=>"fb:"+(cloud.uid||"local");
+let impSaveT=null;
+function saveImportSoon(){ clearTimeout(impSaveT); impSaveT=setTimeout(saveImport,600); }
+async function saveImport(){
+  clearTimeout(impSaveT);
+  if(!impInfo || !fbPosts.length) return;
+  const rec={v:1, savedAt:Date.now(), fileName:impInfo.fileName, startedAt:impInfo.startedAt, hadZip:impInfo.hadZip,
+    added:impInfo.added, addedPhotos:impInfo.addedPhotos, posts:fbPosts, cands:fbCands.map(e=>e.fbts), review:[...review],
+    from:$("fbFrom").value, to:$("fbTo").value};
+  try{ await idbS("imp","readwrite",s=>s.put(rec,impKey())); impSaved=rec; }catch(e){}
+}
+async function clearImport(){
+  clearTimeout(impSaveT);
+  try{ await idbS("imp","readwrite",s=>s.delete(impKey())); }catch(e){}
+  impSaved=null; impInfo=null; fbPosts=[]; fbCands=[]; review=new Map(); fbZips=[]; fbZip=null; zipIndex=null;
+  clearReviewUI(); $("fbSetup").hidden=true; $("fbHow").hidden=false; fbMsg(""); showResume();
+}
+async function checkImport(){
+  try{ impSaved = await idbS("imp","readonly",s=>s.get(impKey())) || null; }catch(e){ impSaved=null; }
+  if(impSaved){
+    const have=onTimeline();
+    if(!impSaved.posts.some(e=>!have.has(e.fbts))){ await clearImport(); return; }
+  }
+  showResume();
+}
+function resumeSummary(s){
+  const have=onTimeline(), left=s.posts.filter(e=>!have.has(e.fbts));
+  const rv=new Map(s.review||[]), cands=new Set(s.cands||[]);
+  const inRange=left.filter(e=>cands.has(e.fbts));
+  const reviewed=inRange.filter(e=>rv.has(e.fbts)).length;
+  const when=new Date(s.savedAt).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+  return `Saved ${when}. ${s.added||0} post${s.added===1?"":"s"} added so far, ${reviewed} of ${inRange.length} remaining posts reviewed${s.hadZip?". You'll be asked to drop the same .zip again to bring in photos":""}.`;
+}
+function showResume(){
+  const active = fbPosts.length>0;
+  const s = impSaved;
+  $("fbResume").hidden = !s || active;
+  $("importBanner").hidden = !s || active;
+  if(s && !active){ $("resumeText").textContent=resumeSummary(s); $("importBannerText").textContent=`You have an unfinished Facebook import. ${resumeSummary(s)}`; }
+}
+function restoreImport(){
+  const s=impSaved; if(!s) return false;
+  const have=onTimeline();
+  fbPosts=s.posts.filter(e=>!have.has(e.fbts));
+  const byTs=new Map(fbPosts.map(e=>[e.fbts,e]));
+  fbCands=(s.cands||[]).map(t=>byTs.get(t)).filter(Boolean);
+  review=new Map(s.review||[]);
+  impInfo={fileName:s.fileName, startedAt:s.startedAt, hadZip:s.hadZip, added:s.added||0, addedPhotos:s.addedPhotos||0};
+  $("fbFrom").value=s.from||""; $("fbTo").value=s.to||"";
+  $("fbSetup").hidden=false; $("fbHow").hidden=true;
+  $("fbPhotos").closest("label").hidden=!fbZip;
+  showResume();
+  if(fbCands.length) renderReview();
+  if(fbCands.length){
+    const left=needsClaude().length, anyAI=fbCands.some(e=>review.get(e.fbts)?.by==="ai");
+    if(anyAI && left){ $("aiProg").hidden=false; $("aiStop").hidden=true; $("aiMore").hidden=false; progressAI(`Claude has reviewed ${fbCands.length-left} of ${fbCands.length} posts. Press Continue to review the rest.`); }
+  }
+  return true;
+}
+function resumeImport(){
+  if(!restoreImport()) return;
+  fbMsg(`Picked up your import of ${impInfo.fileName}: ${fbPosts.length} posts still to go.${impInfo.hadZip&&!fbZip?" To bring in photos, drop the same Facebook .zip again above.":""}`);
+}
+$("resumeGo").addEventListener("click",resumeImport);
+$("resumeDiscard").addEventListener("click",ev=>arm(ev.currentTarget,"Discard this import","Click again to discard",async()=>{ await clearImport(); toast("Saved import progress discarded"); }));
+$("importBannerGo").addEventListener("click",()=>{ openDrawer("fb"); resumeImport(); });
+$("fbDone").addEventListener("click",ev=>arm(ev.currentTarget,"Finish import","Click again to finish",async()=>{
+  const n=impInfo?impInfo.added:0; await clearImport(); toast(`Import finished. ${n} post${n===1?"":"s"} were added.`);
+}));
+
+wireDropMulti("fbDrop","fbFile",async files=>{
+  if(fbAdding) return;
+  if(aiCtl) aiCtl.abort();
+  // Dropping a file while an import is saved continues that import instead of starting over
+  if(impSaved && !fbPosts.length) restoreImport();
+  const continuing = fbPosts.length>0;
+  const label = files.length>1 ? `${files.length} files` : files[0].name;
+  fbMsg("Reading the file"+(files.length>1?"s":"")+"…");
+  try{
+    const {raw,zips}=await readFbFiles(files);
+    if(continuing && !raw.length && zips.length){
+      addZips(zips); impInfo.hadZip=true; $("fbPhotos").closest("label").hidden=false;
+      fbMsg(`Added photos from ${label}. ${fbZips.length} .zip file${fbZips.length>1?"s are":" is"} connected.`);
+      if(fbCands.length) renderReview(); saveImport(); return;
+    }
+    if(!raw.length) return fbMsg("No posts were found. Make sure Posts was selected and the format was JSON, not HTML. If Facebook split the download into several .zip files, choose them all together.",true);
+    const have=onTimeline();
+    let posts=raw.map(fbToEntry).filter(e=>e.date&&e.hasContent);
+    const already=posts.filter(e=>have.has(e.fbts)).length;
+    posts=posts.filter(e=>!have.has(e.fbts));
+    if(continuing){
+      const known=new Set(fbPosts.map(e=>e.fbts));
+      const overlap=posts.filter(e=>known.has(e.fbts)).length;
+      if(!overlap && fbPosts.length) return fbMsg(`That doesn't look like the same download. Drop the .zip you started with (${impInfo.fileName}), or discard the saved import to start a new one.`,true);
+      // Same download: take the fresh copy of each post (it has photo paths) and keep every review decision
+      fbPosts=posts; const byTs=new Map(posts.map(e=>[e.fbts,e]));
+      fbCands=fbCands.map(e=>byTs.get(e.fbts)).filter(Boolean);
+      if(zips.length){ addZips(zips); impInfo.hadZip=true; }
+      $("fbPhotos").closest("label").hidden=!fbZip;
+      fbMsg(`Reconnected ${label}. Your earlier choices are kept: ${fbPosts.length} posts still to go.${fbZip?" Photos will come in with the posts you add.":""}`);
+      if(fbCands.length) renderReview();
+      saveImport(); showResume();
+      return;
+    }
+    if(!posts.length) return fbMsg(already?"Every post in this file is already on your timeline.":"No posts with text or photos were found.",!already);
+    fbPosts=posts; fbCands=[]; review=new Map(); clearReviewUI();
+    fbZips=[]; addZips(zips);
+    impInfo={fileName:label, startedAt:Date.now(), hadZip:zips.length>0, added:0, addedPhotos:0};
+    const ys=fbPosts.map(e=>+e.date.slice(0,4));
+    $("fbFrom").value=Math.min(...ys); $("fbTo").value=Math.max(...ys);
+    $("fbPhotos").closest("label").hidden=!fbZip;
+    const nPh=fbPosts.reduce((n,e)=>n+e.imgs.length,0);
+    const unfound=fbZips.length?fbPosts.reduce((n,e)=>n+e.imgs.filter(u=>!zipFind(u)).length,0):0;
+    fbMsg(`Found ${fbPosts.length} posts${nPh?` with ${nPh} photos`:""}${unfound?`. ${unfound} of the photos aren't in ${zips.length>1?"these files":"this file"}; if Facebook split your download into several .zip files, drop all of them together`:""}${already?` (${already} already on your timeline were left out)`:""}.${!fbZip&&nPh?" Drop the full .zip to bring photos in.":""} Your progress is saved as you go, so you can stop and come back any time.`);
+    $("fbSetup").hidden=false; $("fbHow").hidden=true;
+    saveImport(); showResume();
+  }catch(err){ fbMsg("That file couldn't be read. Drop the .zip from Facebook or a .json file from inside it.",true); }
+});
+["fbFrom","fbTo"].forEach(i=>$(i).addEventListener("change",()=>{
+  if(!fbPosts.length) return;
+  if(review.size){ fbCands=candidates(); renderReview(); const left=needsClaude().length; if(left&&aiOn&&fbCands.some(e=>review.get(e.fbts)?.by==="ai")){ $("aiProg").hidden=false; $("aiMore").hidden=false; progressAI(`${left} posts in this range haven't been reviewed by Claude yet. Press Continue to review them.`); } }
+  saveImportSoon();
+}));
+
+/* ---------- Facebook: find missing photos for posts already on the timeline ---------- */
+let fixPlan=null, fixStopReq=false, fixBusy=false;
+let textOnlyTs=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem("lifeline.textonly"))||[]); }catch(e){ return new Set(); } })();
+function fbNoPhoto(){ return state.entries.filter(e=>e.src==="facebook"&&e.fbts&&!(e.photos&&e.photos.length)&&!textOnlyTs.has(e.fbts)); }
+function updateFixCard(){
+  const n=fbNoPhoto().length;
+  $("fixCard").hidden=!n && !fixBusy;
+  if(n && !fixPlan && !fixBusy) $("fixText").textContent=`${n} Facebook post${n===1?"":"s"} on your timeline ${n===1?"has":"have"} no photos. Some may have been text-only on Facebook, but others may have lost their photos during import. Drop your Facebook download and Lifeline will attach any photos it finds. Your edits to those events are kept.`;
+}
+function fixMsg(t,err){ $("fixMsg").innerHTML = err ? `<span class="msg err" style="display:block">${esc(t)}</span>` : esc(t); }
+wireDropMulti("fixDrop","fixFile",async files=>{
+  if(fixBusy) return;
+  fixPlan=null; $("fixGo").hidden=true; fixMsg("Reading the files…");
+  try{
+    const {raw,zips}=await readFbFiles(files);
+    if(!zips.length) return fixMsg("Drop the .zip files. The .json file on its own doesn't contain photos.",true);
+    addZips(zips);
+    if(!raw.length) return fixMsg("These .zip files have photos but no list of posts. Drop them together with the part that has the posts folder in it.",true);
+    const byTs=new Map(raw.map(p=>[p.timestamp,p]));
+    let notInFile=0, textOnly=0, photosFound=0, photosMissing=0;
+    const plan=[];
+    for(const e of fbNoPhoto()){
+      const p=byTs.get(e.fbts); if(!p){ notInFile++; continue; }
+      const imgs=fbToEntry(p).imgs; if(!imgs.length){ textOnly++; textOnlyTs.add(e.fbts); continue; }
+      const found=imgs.filter(u=>zipFind(u)); photosFound+=found.length; photosMissing+=imgs.length-found.length;
+      if(found.length) plan.push({id:e.id,uris:found});
+    }
+    fixPlan=plan;
+    try{ localStorage.setItem("lifeline.textonly",JSON.stringify([...textOnlyTs])); }catch(e){}
+    const parts=[];
+    parts.push(plan.length ? `Found ${photosFound} photo${photosFound===1?"":"s"} for ${plan.length} post${plan.length===1?"":"s"}.` : "No missing photos were found in these files.");
+    if(textOnly) parts.push(`${textOnly} post${textOnly===1?" was":"s were"} text-only on Facebook, so ${textOnly===1?"it has":"they have"} nothing to add.`);
+    if(photosMissing) parts.push(`${photosMissing} photo${photosMissing===1?" is":"s are"} listed but not in these files. Facebook may have split your download into more parts; drop them all together to get the rest.`);
+    if(notInFile) parts.push(`${notInFile} post${notInFile===1?" isn't":"s aren't"} in this download. ${notInFile===1?"It":"They"} may come from a different download.`);
+    fixMsg(parts.join(" "));
+    if(plan.length){ $("fixGo").hidden=false; $("fixGo").textContent=`Attach ${photosFound} photo${photosFound===1?"":"s"}`; }
+  }catch(err){ fixMsg(err.message||"Those files couldn't be read. Drop the .zip files from Facebook.",true); }
+});
+$("fixStop").addEventListener("click",()=>{ fixStopReq=true; $("fixStop").disabled=true; $("fixStop").textContent="Stopping…"; });
+$("fixGo").addEventListener("click",async()=>{
+  if(!fixPlan||!fixPlan.length) return;
+  fixBusy=true; fixStopReq=false;
+  $("fixGo").hidden=true; $("fixStop").hidden=false; $("fixStop").disabled=false; $("fixStop").textContent="Stop for now";
+  const bar=$("fixProg"); bar.hidden=false; bar.firstElementChild.style.width="0%";
+  const total=fixPlan.reduce((n,t)=>n+t.uris.length,0); let done=0, posts=0, failed=0, since=0;
+  for(const t of fixPlan){
+    if(fixStopReq) break;
+    const e=state.entries.find(x=>x.id===t.id);
+    if(!e || (e.photos&&e.photos.length)){ done+=t.uris.length; continue; }
+    const ids=[];
+    for(const u of t.uris){
+      try{ ids.push(await putPhoto(await shrink(await zipFind(u).async("blob")))); }catch(err){ failed++; }
+      done++; bar.firstElementChild.style.width=(100*done/total)+"%";
+      fixMsg(`Attaching photos: ${done} of ${total}`);
+    }
+    if(ids.length){ e.photos=ids; posts++; since++; }
+    if(since>=10){ since=0; save(); render(); }
+  }
+  save(); render();
+  fixBusy=false; bar.hidden=true; $("fixStop").hidden=true; fixPlan=null;
+  const stopped=fixStopReq;
+  fixMsg(`${stopped?"Stopped. ":""}Attached photos to ${posts} post${posts===1?"":"s"}${failed?`. ${failed} photo${failed===1?"":"s"} couldn't be read`:""}.${stopped?" Drop the files again any time to finish the rest.":""}`);
+  toast(`Attached photos to ${posts} Facebook post${posts===1?"":"s"}`);
+  updateFixCard();
+});
+
+/* ---------- Facebook: which posts are life events ---------- */
+function updateAiAvailability(){
+  const ok=aiOn;
+  $("aiRun").hidden=!ok;
+  $("aiIntro").textContent = ok
+    ? "Claude reads each post and suggests the ones that record something that happened in your life (a concert with your son, a move, a new job) and leaves out the rest (a favorite song, a meme, a news link). You review the suggestions before anything is added."
+    : "Claude review isn't available here, so use the quick keyword check. It looks for words like wedding, graduated, new job, moved, concert and trip. You review the results before anything is added.";
+}
+const AI_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook posts.
+For each post below, decide whether it records a real event or milestone in the poster's life that belongs on a personal life timeline.
+
+KEEP posts about things that actually happened to the poster or their close family and friends, for example: births, weddings, engagements, anniversaries, graduations, first days, new jobs, promotions, retirements, moves and new homes, trips and vacations, concerts, games, shows or festivals they attended (especially with family), reunions, achievements and awards, races or sports milestones, a new pet, a first car, a serious illness or recovery, the death of a loved one, a holiday or birthday with specific detail about what they did.
+SKIP posts that are not events: opinions, jokes, memes, quotes, song or movie or sports commentary not tied to attending something, shared news or links, political posts, generic greetings ("happy Friday"), contests, sales or ads, vague moods, profile picture changes with no story.
+Example: "This is my favorite rock song of all time" -> skip. "Saw Foo Fighters tonight with my son, his first concert!" -> keep, title "Took my son to his first concert: Foo Fighters".
+
+Return ONLY a JSON array with one object per post, in the same order, each:
+{"id": <the post's id>, "keep": true|false, "score": 0-10 (how significant this is for the person's life story), "title": "short timeline title, past tense, under 60 characters, written as the event", "category": one of "milestone","family","education","work","home","travel","other", "reason": "under 12 words"}
+
+Posts:
+`;
+function setAiButtons(running){ $("aiStop").hidden=!running; $("aiRun").disabled=running; $("kwRun").disabled=running; $("allRun").disabled=running; $("fbImport").disabled=running||$("fbImport").disabled; }
+async function runAI(){
+  if(!aiOn||!fbPosts.length) return;
+  if(!fbCands.length) fbCands=candidates();
+  aiCtl=new AbortController(); const sig=aiCtl.signal;
+  $("aiProg").hidden=false; $("aiMore").hidden=true; setAiButtons(true);
+  const B=60; let failed=null, first=true;
+  while(true){
+    const batch=needsClaude().slice(0,B);
+    if(!batch.length) break;
+    progressAI(first&&!fbCands.some(e=>review.get(e.fbts)?.by==="ai")?"Waiting for Claude (you may be asked to allow it)…":null); first=false;
+    const lines=batch.map((e,i)=>JSON.stringify({id:i+1,date:e.date,text:(e.body||e.label||"").slice(0,500),photos:e.imgs.length||undefined,place:e.place||undefined,facebook_label:e.body?undefined:(e.label||undefined)})).join("\n");
+    try{
+      const resp=await api("/api/review",{method:"POST",signal:sig,json:{posts:batch.map(e=>({date:e.date,text:e.body||"",photos:e.imgs.length||undefined,place:e.place||undefined,label:e.body?undefined:(e.label||undefined)}))}});
+      if(sig.aborted) break;
+      const arr=Array.isArray(resp.results)?resp.results:[];
+      arr.forEach(r=>{ const e=batch[(+r.id)-1]; if(!e) return; const sc=clamp(+r.score||0,0,10), keep=!!r.keep&&sc>=4;
+        review.set(e.fbts,{by:"ai",keep,score:sc,title:String(r.title||e.title).slice(0,90),cat:CAT_LABEL[r.category]&&r.category!=="post"?r.category:"other",reason:String(r.reason||""),checked:keep}); });
+      batch.forEach(e=>{ const r=review.get(e.fbts); if(!r||r.by!=="ai") review.set(e.fbts,{by:"ai",keep:false,score:0,title:e.title,cat:"post",reason:"Claude didn't return an answer for this one",checked:false}); });
+      progressAI(); saveImport();
+    }catch(e){ failed = (e&&e.name==="AbortError") ? {code:"cancelled"} : e; break; }
+  }
+  setAiButtons(false); updateFoot();
+  const done=fbCands.length-needsClaude().length, total=fbCands.length;
+  if(failed && failed.code!=="cancelled"){
+    const c=failed.code;
+    if(c==="not_configured"){ aiOn=false; updateAiAvailability(); runKeywords(); $("aiProg").hidden=false; $("aiText").textContent="Claude review isn't set up on this site, so the keyword check was used instead."; return; }
+    $("aiText").textContent = c==="daily_limit"
+      ? `You've reached today's limit for Claude reviews. ${done} of ${total} posts are reviewed and saved. Press Continue tomorrow to pick up where you left off.`
+      : c==="busy"
+      ? `Claude is busy right now. ${done} of ${total} posts reviewed and saved. Press Continue in a few minutes.`
+      : failed.status===401 ? "You've been signed out. Sign in again, then press Continue."
+      : `Claude couldn't finish this batch. ${done} of ${total} posts reviewed and saved. Press Continue to try again.`;
+    $("aiMore").hidden=false;
+  } else if(done<total){
+    $("aiText").textContent=`Paused after ${done} of ${total} posts. Your progress is saved; press Continue now or any time later.`;
+    $("aiMore").hidden=false;
+  } else $("aiText").textContent=`Claude reviewed all ${total} posts.`;
+  if(fbCands.length) renderReview();
+}
+function progressAI(msg){
+  const total=fbCands.length, done=total-needsClaude().length;
+  $("aiBar").style.width=(total?100*done/total:0)+"%";
+  $("aiText").textContent=msg||`Reviewed ${done} of ${total} posts. Progress is saved as it goes.`;
+  if(review.size) renderReview();
+}
+$("aiRun").addEventListener("click",()=>{ if(!fbCands.length) fbCands=candidates(); runAI(); });
+$("aiMore").addEventListener("click",runAI);
+$("aiStop").addEventListener("click",()=>aiCtl&&aiCtl.abort());
+
+const KW=[
+  [/\b(married|wedding|engaged|proposed|anniversary|honeymoon)\b/i,"family",8,"Wedding or anniversary"],
+  [/\b(born|newborn|baby (boy|girl)|welcome(d)? (our|baby)|it'?s a (boy|girl)|pregnan\w*)\b/i,"family",9,"Birth or new baby"],
+  [/\b(graduat\w*|diploma|commencement|degree|first day of (school|college|kindergarten))\b/i,"education",8,"School milestone"],
+  [/\b(new job|first day (at|of work)|hired|promot\w*|retir\w*|started (at|working)|last day at)\b/i,"work",7,"Work change"],
+  [/\b(moved (in|to|into)|moving day|new (house|home|apartment|place)|closed on|bought a house)\b/i,"home",7,"Move or new home"],
+  [/\b(passed away|funeral|rest in peace|lost (my|our) (mom|dad|mother|father|grand\w*|brother|sister|friend))\b/i,"family",8,"Loss of a loved one"],
+  [/\b(concert|festival|tickets|front row|show tonight|live at|the game (with|tonight))\b/i,"milestone",6,"Event attended"],
+  [/\b(trip|vacation|road ?trip|flew to|cruise|national park|visiting|weekend in|landed in)\b/i,"travel",6,"Trip"],
+  [/\b(marathon|half marathon|5k|award|won (the|first)|finished (my|the)|first (car|home|marathon)|adopted|new puppy|new kitten)\b/i,"milestone",6,"Achievement or first"],
+  [/\b(turned \d+|\d+(st|nd|rd|th) birthday|surgery|cancer[- ]free|out of the hospital)\b/i,"family",5,"Personal milestone"]
+];
+function runKeywords(){
+  fbCands=candidates();
+  fbCands.forEach(e=>{
+    const old=review.get(e.fbts); if(old&&old.by==="ai") return;
+    const t=(e.body||"")+" "+(e.label||"");
+    let best=null; for(const [re,cat,sc,why] of KW) if(re.test(t)&&(!best||sc>best[1])) best=[cat,sc,why];
+    let score=best?best[1]:(e.imgs.length&&e.place?4:1);
+    if(best&&e.imgs.length) score=Math.min(10,score+1);
+    review.set(e.fbts,{by:"kw",keep:score>=5,score,title:e.title,cat:best?best[0]:"post",reason:best?`Mentions: ${best[2].toLowerCase()}`:(e.imgs.length&&e.place?"Photos at a named place":"No life-event words found"),checked:score>=5});
+  });
+  renderReview(); saveImport();
+}
+$("kwRun").addEventListener("click",runKeywords);
+$("allRun").addEventListener("click",()=>{
+  fbCands=candidates();
+  fbCands.forEach(e=>{ const r=review.get(e.fbts); if(r) r.keep=true; else review.set(e.fbts,{by:"all",keep:true,score:0,title:e.title,cat:"post",reason:"",checked:true}); });
+  renderReview(); saveImport();
+});
+function rvRow(e,r){
+  return `<label class="rv"><input type="checkbox" data-k="${e.fbts}" ${r.checked?"checked":""}>
+    <span><span class="top"><span class="d">${fmtDate(e.date)}</span><b>${esc(r.title)}</b>${r.score?`<span class="score" title="Significance out of 10">${r.score}/10</span>`:""}${e.imgs.length?`<span class="d">${e.imgs.length} photo${e.imgs.length>1?"s":""}</span>`:""}</span>
+    ${e.body&&e.body!==r.title?`<span class="txt">${esc(e.body)}</span>`:""}${r.reason?`<span class="why">${esc(r.reason)}</span>`:""}</span></label>`;
+}
+function renderReview(){
+  const keep=[], left=[];
+  fbCands.forEach(e=>{ const r=review.get(e.fbts); if(!r) return; (r.keep?keep:left).push([e,r]); });
+  keep.sort((a,b)=>b[1].score-a[1].score||a[0].date.localeCompare(b[0].date));
+  $("rvKeepH").textContent=`Suggested for your timeline (${keep.length})`;
+  $("rvLeftH").textContent=`Left out (${left.length})`;
+  $("rvKeep").innerHTML=keep.map(([e,r])=>rvRow(e,r)).join("") || `<div class="rv"><span></span><span class="hint">Nothing suggested yet.</span></div>`;
+  $("rvLeftWrap").hidden=!left.length;
+  $("rvLeft").innerHTML=left.map(([e,r])=>rvRow(e,r)).join("");
+  $("fbReview").hidden=false; $("fbFoot").hidden=false; updateFoot();
+}
+function updateFoot(){
+  if(fbAdding) return;
+  const sel=fbCands.filter(e=>review.get(e.fbts)?.checked);
+  const nPh=sel.reduce((n,e)=>n+e.imgs.length,0);
+  $("fbImport").textContent=`Add ${sel.length} post${sel.length===1?"":"s"}`; $("fbImport").disabled=!sel.length;
+  $("fbFootMsg").textContent = !nPh ? "Progress is saved as you go."
+    : fbZip ? ($("fbPhotos").checked ? `With ${nPh} photos. You can stop part way and continue later.` : "Photos won't be included.")
+    : impInfo&&impInfo.hadZip ? `Drop the same .zip again above to include the ${nPh} photos.` : `These posts have ${nPh} photos. Drop the Facebook .zip above to include them.`;
+}
+["rvKeep","rvLeft"].forEach(id=>$(id).addEventListener("change",e=>{ const k=e.target.dataset.k; if(!k) return; const r=review.get(+k); if(r){ r.checked=e.target.checked; updateFoot(); saveImportSoon(); } }));
+$("fbPhotos").addEventListener("change",updateFoot);
+document.querySelectorAll("[data-sel]").forEach(b=>b.addEventListener("click",()=>{
+  const [grp,v]=b.dataset.sel.split(":");
+  fbCands.forEach(e=>{ const r=review.get(e.fbts); if(r && (grp==="keep")===r.keep) r.checked=v==="1"; });
+  renderReview(); saveImportSoon();
+}));
+$("fbStop").addEventListener("click",()=>{ fbStopReq=true; $("fbStop").disabled=true; $("fbStop").textContent="Stopping…"; });
+$("fbImport").addEventListener("click",ev=>{
+  const sel=fbCands.filter(e=>review.get(e.fbts)?.checked);
+  const btn=ev.currentTarget;
+  if(sel.some(e=>e.imgs.length) && !fbZips.length){
+    arm(btn, btn.textContent, "Photos aren't connected. Click again to add without them", addSelected);
+    $("fbFootMsg").textContent="Drop your Facebook .zip above first to bring the photos in.";
+    return;
+  }
+  addSelected();
+});
+async function addSelected(){
+  const sel=fbCands.filter(e=>review.get(e.fbts)?.checked);
+  if(!sel.length) return;
+  const withPhotos=$("fbPhotos").checked&&fbZip;
+  const total=withPhotos?sel.reduce((n,e)=>n+e.imgs.length,0):0;
+  fbAdding=true; fbStopReq=false;
+  const btn=$("fbImport"); btn.disabled=true; btn.hidden=true;
+  $("fbStop").hidden=false; $("fbStop").disabled=false; $("fbStop").textContent="Stop for now"; $("fbDone").hidden=true;
+  ["aiRun","kwRun","allRun","aiMore"].forEach(id=>$(id).disabled=true);
+  const bar=$("fbProg"); bar.hidden=false; bar.firstElementChild.style.width="0%";
+  let done=0, posts=0, photosIn=0, missing=0, chunk=[], lastCommit=Date.now();
+  const commit=async()=>{
+    if(!chunk.length) return;
+    addEntries(chunk);
+    const added=new Set(chunk.map(o=>o.fbts));
+    fbPosts=fbPosts.filter(e=>!added.has(e.fbts)); fbCands=fbCands.filter(e=>!added.has(e.fbts));
+    impInfo.added+=chunk.length; chunk=[]; lastCommit=Date.now();
+    await saveImport();
+  };
+  for(const e of sel){
+    if(fbStopReq) break;
+    const r=review.get(e.fbts), photos=[];
+    if(withPhotos) for(const u of e.imgs){
+      const f=zipFind(u);
+      if(f){ try{ photos.push(await putPhoto(await shrink(await f.async("blob")))); photosIn++; }catch(err){ missing++; } } else missing++;
+      done++;
+    }
+    const desc=[e.body&&e.body!==r.title?e.body:"", e.link].filter(Boolean).join("\n");
+    chunk.push({date:e.date,title:r.title,desc,cat:r.cat,place:e.place,src:"facebook",fbts:e.fbts,photos,videos:e.videos||undefined,imp:r.score||undefined});
+    posts++;
+    bar.firstElementChild.style.width=(100*(total?done/total:posts/sel.length))+"%";
+    $("fbFootMsg").textContent=`Adding ${posts} of ${sel.length} posts${total?`, ${done} of ${total} photos`:""}`;
+    if(chunk.length>=20 || Date.now()-lastCommit>8000) await commit();
+  }
+  await commit();
+  impInfo.addedPhotos+=photosIn;
+  fbAdding=false; bar.hidden=true;
+  btn.hidden=false; $("fbStop").hidden=true; $("fbDone").hidden=false;
+  ["aiRun","kwRun","allRun","aiMore"].forEach(id=>$(id).disabled=false);
+  const stopped=posts<sel.length;
+  toast(`${stopped?"Stopped. ":""}Added ${posts} post${posts===1?"":"s"}${photosIn?` and ${photosIn} photos`:""}${missing?` (${missing} photos weren't in the file)`:""}.${stopped?" The rest are saved for later.":""}`);
+  if(!fbPosts.length){ const n=impInfo.added; await clearImport(); fbMsg(`All done. ${n} posts from this download are on your timeline.`); updateFixCard(); return; }
+  renderReview(); saveImport(); updateFixCard();
+}
+
+/* ---------- Start ---------- */
+setStatus("busy", sharedToken ? "Loading" : "Looking for your saved timeline");
+updateAiAvailability();
+render();
+initServer();
+</script>
