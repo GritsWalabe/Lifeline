@@ -108,6 +108,15 @@ textarea.grow.capped{overflow-y:auto}
 .tc:hover,.tc:focus-visible{box-shadow:0 6px 20px rgba(10,16,24,.18)}
 .tc img{width:100%;height:56px;object-fit:cover;display:block;background:var(--line);flex:none}
 .tc .tb{display:flex;flex-direction:column;gap:2px;padding:6px 9px 8px;min-height:0}
+.tc.colored,.ev.colored{background:var(--bx);color:var(--bt);border-color:color-mix(in srgb,var(--bx) 70%,#000 30%)}
+.tc.colored .tm,.ev.colored .meta,.ev.colored .date{color:inherit;opacity:.8}
+.ev.colored .cat{color:inherit}
+.chip.color i{width:12px;height:12px;border-radius:3px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.25)}
+.chip.color.none i{background:var(--surface)!important;box-shadow:inset 0 0 0 1px var(--muted)}
+.chip.reset{font-weight:600;color:var(--accent)}
+.sw.none{background:var(--surface);border:1px dashed var(--muted);position:relative}
+.sw.none::after{content:"";position:absolute;inset:4px;background:linear-gradient(135deg,transparent 46%,var(--muted) 46%,var(--muted) 54%,transparent 54%)}
+.ctag{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;border-radius:4px;padding:1px 8px;background:var(--bx);color:var(--bt);border:1px solid color-mix(in srgb,var(--bx) 70%,#000 30%)}
 .tc .tm{display:flex;align-items:center;gap:5px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden}
 .tc .tm i{width:7px;height:7px;border-radius:50%;background:var(--cc);flex:none}
 .tc .tt{font-family:var(--f-display);font-weight:500;font-size:13.5px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
@@ -433,6 +442,11 @@ body.readonly #personName{pointer-events:none}
           <label>Category<select id="fCat"></select></label>
           <label>Place<input type="text" id="fPlace" placeholder="Dallas, TX"></label>
         </div>
+        <span class="flabel">Box color</span>
+        <div class="stack" style="gap:8px">
+          <div class="swatches" id="fSwatches"></div>
+          <label id="fColorNameWrap" hidden>What this color means (optional, used for every event with this color)<input type="text" id="fColorName" maxlength="60" placeholder="Work"></label>
+        </div>
         <label>Details<textarea id="fDesc" class="grow" rows="3" placeholder="Anything worth remembering about it"></textarea></label>
         <span class="flabel">Photos</span>
         <div class="photo-in" id="fPhotoZone">
@@ -479,7 +493,7 @@ body.readonly #personName{pointer-events:none}
         <h3>Upload a spreadsheet</h3>
         <p>Excel (.xlsx, .xls) or CSV. One row per event, with a header row. Columns are matched automatically and you can change the matching below.</p>
         <label class="drop" id="sheetDrop"><input type="file" id="sheetFile" accept=".xlsx,.xls,.csv,.tsv,.ods"><span><strong>Choose a file</strong> or drop it here</span></label>
-        <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code> <code>Photos</code> (links to pictures; several in one cell is fine). Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
+        <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code> <code>Color</code> (a color like blue, a code like #BFDBFE, or a label like Work) <code>Photos</code> (links to pictures; several in one cell is fine). Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
         <div id="sheetResult" class="stack" hidden>
           <div class="map" id="sheetMap"></div>
           <div class="preview" id="sheetPreview"></div>
@@ -762,6 +776,7 @@ function parseDate(v){
     return null;
   }
   let s=String(v).trim().replace(/^(c\.|circa|about|approx\.?|~)\s*/i,""), m;
+  if(/^\d{5}(\.\d+)?$/.test(s) && +s>20000 && +s<80000) return parseDate(+s); // an Excel date number
   if(m=s.match(/^(\d{4})$/)) return mk(m[1]);
   if(m=s.match(/^(\d{4})[-\/.](\d{1,2})$/)) return mk(m[1],m[2]);
   if(m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)) return mk(m[1],m[2],m[3]);
@@ -881,11 +896,11 @@ let pending=new Set();
 function pendingKey(){ return "lifeline.pending:"+cloud.uid; }
 function loadPending(){ try{ pending=new Set(JSON.parse(localStorage.getItem(pendingKey()))||[]); }catch(e){ pending=new Set(); } }
 function savePending(){ if(!cloud.uid) return; try{ localStorage.setItem(pendingKey(), JSON.stringify([...pending])); }catch(e){} }
-const KEEP_FIELDS=["id","date","end","title","desc","cat","place","src","fbts","photos","videos","imp"];
+const KEEP_FIELDS=["id","date","end","title","desc","cat","place","src","fbts","photos","videos","imp","color"];
 function slim(e){ const o={}; for(const k of KEEP_FIELDS) if(e[k]!=null && e[k]!=="" && !(Array.isArray(e[k])&&!e[k].length)) o[k]=e[k]; return o; }
-function docOut(){ return {name:state.name||"", entries:state.entries.map(slim), eras:(state.eras||[]).map(({id,name,start,end,color})=>({id,name,start,end:end||"",color}))}; }
+function docOut(){ return {name:state.name||"", colorNames:state.colorNames||{}, entries:state.entries.map(slim), eras:(state.eras||[]).map(({id,name,start,end,color})=>({id,name,start,end:end||"",color}))}; }
 function fixEntry(e){ return CAT_LABEL[e.cat] ? e : {...e, cat:"other"}; }
-function docIn(d){ return {name:d.name||"", entries:Array.isArray(d.entries)?d.entries.filter(e=>e&&typeof e.date==="string"&&/^\d{4}/.test(e.date)).map(fixEntry):[], eras:Array.isArray(d.eras)?d.eras:[], sample:false}; }
+function docIn(d){ return {name:d.name||"", entries:Array.isArray(d.entries)?d.entries.filter(e=>e&&typeof e.date==="string"&&/^\d{4}/.test(e.date)).map(fixEntry):[], eras:Array.isArray(d.eras)?d.eras:[], colorNames:(d.colorNames&&typeof d.colorNames==="object")?{...d.colorNames}:{}, sample:false}; }
 
 async function api(path,opts={}){
   const o={method:opts.method||"GET", headers:{...(opts.headers||{})}, credentials:"same-origin", signal:opts.signal};
@@ -1184,7 +1199,7 @@ $("delAcct").addEventListener("click",ev=>arm(ev.currentTarget,"Delete my accoun
 }));
 function csvText(){
   const q=s=>`"${String(s??"").replace(/"/g,'""')}"`;
-  const rows=[["Date","End date","Title","Description","Category","Place"]].concat([...state.entries].sort((a,b)=>sortKey(a.date).localeCompare(sortKey(b.date))).map(e=>[e.date,e.end||"",e.title,e.desc,CAT_LABEL[e.cat],e.place]));
+  const rows=[["Date","End date","Title","Description","Category","Place","Color"]].concat([...state.entries].sort((a,b)=>sortKey(a.date).localeCompare(sortKey(b.date))).map(e=>[e.date,e.end||"",e.title,e.desc,CAT_LABEL[e.cat],e.place,e.color?(state.colorNames&&state.colorNames[e.color])||e.color:""]));
   return rows.map(r=>r.map(q).join(",")).join("\n");
 }
 $("dlCsv").addEventListener("click",()=>{
@@ -1196,8 +1211,15 @@ $("dlCsv").addEventListener("click",()=>{
 
 /* ---------- Rendering ---------- */
 function toast(t){ const el=$("toast"); el.textContent=t; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,3600); }
-function dropSample(){ if(state.sample){ state={name: state.name===SAMPLE_NAME?"":state.name, entries:[], eras:[], sample:false}; renderEraList(); } }
+function dropSample(){ if(state.sample){ state={name: state.name===SAMPLE_NAME?"":state.name, entries:[], eras:[], colorNames:{}, sample:false}; renderEraList(); } }
 function addEntries(arr){ dropSample(); state.entries.push(...arr.map(e=>({id:uid(),...e}))); save(); render(); }
+/* ---------- Box colors ---------- */
+const BOX_COLORS=[["#FDE68A","Yellow"],["#FED7AA","Orange"],["#FECACA","Red"],["#FBCFE8","Pink"],["#DDD6FE","Purple"],["#BFDBFE","Blue"],["#99F6E4","Teal"],["#BBF7D0","Green"],["#E5E7EB","Gray"],["#1F2937","Charcoal"]];
+const COLOR_WORDS={yellow:"#FDE68A",gold:"#FDE68A",orange:"#FED7AA",red:"#FECACA",pink:"#FBCFE8",purple:"#DDD6FE",violet:"#DDD6FE",blue:"#BFDBFE",teal:"#99F6E4",aqua:"#99F6E4",green:"#BBF7D0",gray:"#E5E7EB",grey:"#E5E7EB",black:"#1F2937",charcoal:"#1F2937"};
+let hiddenColors=new Set();
+const normColor=c=>{ const m=String(c||"").trim().match(/^#?([0-9a-f]{6})$/i); return m?"#"+m[1].toUpperCase():""; };
+function colorLabel(c){ if(!c) return "No color"; return (state.colorNames&&state.colorNames[c]) || (BOX_COLORS.find(x=>x[0]===c)||[])[1] || "Custom color"; }
+function boxStyle(e){ return e.color ? `--bx:${e.color};--bt:${textOn(e.color)};` : ""; }
 function priority(e){
   let p = e.src==="facebook" ? 0.4+(e.imp??5)/10 : e.src==="sheet" ? 1.3 : 1.5;
   if(e.photos&&e.photos.length) p+=0.3;
@@ -1216,8 +1238,16 @@ function render(){
     `<button class="chip" data-cat="${k}" aria-pressed="${filters.has(k)}" style="--cc:var(--c-${k})"><i></i>${l}<span class="n">${counts[k]}</span></button>`).join("")
     + (state.eras.length ? `<span class="chip-sep"></span>` + sortedEras().map(e=>`<button class="chip era" data-era="${e.id}" style="--cc:${e.color}" title="Show ${esc(e.name)} on the timeline"><i></i>${esc(e.name)}</button>`).join("") : "")
     + `<button class="chip" id="addEraChip" style="--cc:var(--muted)">+ Era</button>`;
+  // Color chips: one per box color in use (plus "No color" when some have none)
+  const cc={}; all.forEach(e=>{ const k=e.color||""; cc[k]=(cc[k]||0)+1; });
+  const used=Object.keys(cc).filter(Boolean).sort((a,b)=>{ const ia=BOX_COLORS.findIndex(x=>x[0]===a), ib=BOX_COLORS.findIndex(x=>x[0]===b); return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b); });
+  if(used.length){
+    const keys=cc[""]?[...used,""]:used;
+    $("chips").insertAdjacentHTML("afterbegin", keys.map(k=>`<button class="chip color${k?"":" none"}" data-color="${k}" aria-pressed="${!hiddenColors.has(k)}" style="--cc:${k||"transparent"}" title="Click to hide or show. Double-click to show only this color."><i></i>${esc(colorLabel(k))}<span class="n">${cc[k]}</span></button>`).join("")+`<span class="chip-sep"></span>`);
+  }
+  if(hiddenColors.size || filters.size<CATS.length) $("chips").insertAdjacentHTML("beforeend",`<button class="chip reset" id="showAllChip">Show everything</button>`);
   const q = $("search").value.trim().toLowerCase();
-  visible = all.filter(e=>filters.has(e.cat) && (!q || (e.title+" "+(e.desc||"")+" "+(e.place||"")).toLowerCase().includes(q)))
+  visible = all.filter(e=>filters.has(e.cat) && !hiddenColors.has(e.color||"") && (!q || (e.title+" "+(e.desc||"")+" "+(e.place||"")).toLowerCase().includes(q)))
                .sort((a,b)=> sortKey(a.date).localeCompare(sortKey(b.date)));
   $("slideshow").disabled = !visible.some(e=>e.photos&&e.photos.length);
   $("vTrack").setAttribute("aria-pressed", view==="track"); $("vList").setAttribute("aria-pressed", view==="list");
@@ -1227,7 +1257,7 @@ function render(){
 function emptyHTML(){
   const q=$("search").value.trim();
   if(q && state.entries.length) return `<h3>No events match “${esc(q)}”</h3><button class="btn" onclick="clearSearch()">Clear search</button>`;
-  if(state.entries.length) return `<h3>No events to show</h3>All categories are turned off. <button class="btn sm" onclick="filters=new Set(CATS.map(c=>c[0]));render()">Show all categories</button>`;
+  if(state.entries.length) return `<h3>No events to show</h3>The colors or categories you've hidden cover everything. <button class="btn sm" onclick="hiddenColors.clear();filters=new Set(CATS.map(c=>c[0]));render()">Show everything</button>`;
   return `<h3>No events yet</h3>Add your first event with Add &amp; import.`;
 }
 function showEmptyReason(){ $("trackEmpty").innerHTML=emptyHTML(); }
@@ -1243,7 +1273,7 @@ function renderList(){
       html+=`<div class="year"><h3>${y}</h3><span class="age">${birth&&yr>birth?`age ${yr-birth}`:""}</span>${inEras.length?`<span class="eras">${inEras.map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</span>`:""}</div>`; }
     const src=e.src==="facebook"?`<span class="src">From Facebook</span>`:e.src==="sheet"?`<span class="src">From spreadsheet</span>`:"";
     const ph=(e.photos||[]).slice(0,6).map(p=>`<span class="sq"><img alt="" data-src="${p}"></span>`).join("");
-    html+=`<button class="ev" data-id="${e.id}" style="--cc:var(--c-${e.cat})">
+    html+=`<button class="ev${e.color?" colored":""}" data-id="${e.id}" style="--cc:var(--c-${e.cat});${boxStyle(e)}">
       <span class="meta"><span class="date">${fmtRange(e)}</span>${e.end?`<span>${duration(e)}</span>`:""}<span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src}</span>
       <h4>${esc(e.title)}</h4>${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}${ph?`<span class="strip">${ph}</span>`:""}</button>`;
   }
@@ -1336,7 +1366,7 @@ function layoutTrack(keepTime){
       h+=`<i class="pin" style="${cc};left:${x}px;top:${axisY}px"></i>`;
       const ph=e.photos&&e.photos[0];
       const pos = side==="up" ? `bottom:${H-edge}px` : `top:${edge}px`;
-      h+=`<button class="tc ${side}${ph?" hasimg":""}" data-id="${e.id}" data-x="${x}" style="${cc};left:${x-CW/2}px;${pos};width:${CW}px;max-height:${CH}px" aria-label="${esc(fmtRange(e)+": "+e.title)}">${ph?`<img alt="" data-src="${ph}">`:""}<span class="tb"><span class="tm"><i></i>${fmtRange(e)}${!e.end&&e.photos&&e.photos.length>1?` · ${e.photos.length} photos`:""}</span><span class="tt">${esc(e.title)}</span></span></button>`;
+      h+=`<button class="tc ${side}${ph?" hasimg":""}${e.color?" colored":""}" data-id="${e.id}" data-x="${x}" style="${cc};${boxStyle(e)}left:${x-CW/2}px;${pos};width:${CW}px;max-height:${CH}px" aria-label="${esc(fmtRange(e)+": "+e.title)}">${ph?`<img alt="" data-src="${ph}">`:""}<span class="tb"><span class="tm"><i></i>${fmtRange(e)}${!e.end&&e.photos&&e.photos.length>1?` · ${e.photos.length} photos`:""}</span><span class="tt">${esc(e.title)}</span></span></button>`;
     } else {
       dots++;
       h+=`<button class="dot" data-id="${e.id}" data-x="${x}" style="${cc};left:${x}px;top:${axisY}px" title="${esc(fmtRange(e)+" · "+e.title)}" aria-label="${esc(fmtRange(e)+": "+e.title)}"></button>`;
@@ -1485,7 +1515,7 @@ function drawDetail(){
   $("dBody").innerHTML=`<div class="yr">${y}</div><div class="when">${fmtRange(e)}${e.end?` · ${duration(e)}`:""}${birth&&y>birth?` · age ${y-birth}`:""}</div>
     <h2 id="dTitle" style="white-space:pre-line">${esc(e.title)}</h2>
     ${erasAt(tval(e.date)).length?`<div class="tags">${erasAt(tval(e.date)).map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</div>`:""}
-    <div class="tags"><span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src?`<span class="src">${src}</span>`:""}${e.videos?`<span>${e.videos} video${e.videos>1?"s":""} not imported</span>`:""}</div>
+    <div class="tags">${e.color?`<span class="ctag" style="${boxStyle(e)}">${esc(colorLabel(e.color))}</span>`:""}<span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src?`<span class="src">${src}</span>`:""}${e.videos?`<span>${e.videos} video${e.videos>1?"s":""} not imported</span>`:""}</div>
     ${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}`;
 }
 $("dMedia").addEventListener("click",ev=>{
@@ -1639,6 +1669,19 @@ $("fMulti").addEventListener("change",()=>{
 ["fYear","fMonth","fDay","fEYear","fEMonth","fEDay"].forEach(id=>$(id).addEventListener("input",updateDur));
 CATS.forEach(([k,l])=>$("fCat").insertAdjacentHTML("beforeend",`<option value="${k}">${l}</option>`));
 $("fCat").value="milestone";
+let fColor="";
+function renderFSwatches(){
+  const custom=fColor && !BOX_COLORS.some(x=>x[0]===fColor);
+  $("fSwatches").innerHTML=`<button type="button" class="sw none" data-c="" aria-pressed="${!fColor}" aria-label="No color" title="No color"></button>`
+    + BOX_COLORS.map(([c,n])=>`<button type="button" class="sw" data-c="${c}" style="--sc:${c}" aria-pressed="${c===fColor}" aria-label="${n}${state.colorNames&&state.colorNames[c]?" ("+esc(state.colorNames[c])+")":""}" title="${esc(colorLabel(c))}"></button>`).join("")
+    + `<input type="color" id="fCustom" value="${fColor||"#FDE68A"}" aria-label="Pick any color" title="Pick any color"${custom?' style="outline:2px solid var(--ink);outline-offset:1px"':""}>`;
+  $("fColorNameWrap").hidden=!fColor;
+  if(fColor) $("fColorName").value=(state.colorNames&&state.colorNames[fColor])||"";
+}
+function setFColor(c){ fColor=normColor(c); renderFSwatches(); }
+$("fSwatches").addEventListener("click",e=>{ const b=e.target.closest(".sw"); if(b) setFColor(b.dataset.c); });
+$("fSwatches").addEventListener("change",e=>{ if(e.target.id==="fCustom") setFColor(e.target.value); });
+renderFSwatches();
 // New events start on today's date; change it for anything in the past
 function setToday(){
   const d=new Date();
@@ -1664,13 +1707,14 @@ $("pane-add").addEventListener("submit",async ev=>{
   const photos=[];
   for(const p of formPhotos){ photos.push(p.id || await putPhoto(await shrink(p.file))); if(p.url) URL.revokeObjectURL(p.url); }
   btn.disabled=false;
-  const rec={date,end,title,cat:$("fCat").value,place:$("fPlace").value.trim(),desc:$("fDesc").value.trim(),photos};
+  const rec={date,end,title,cat:$("fCat").value,place:$("fPlace").value.trim(),desc:$("fDesc").value.trim(),photos,color:fColor||""};
+  if(fColor){ if(!state.colorNames) state.colorNames={}; const nm=$("fColorName").value.trim(); if(nm) state.colorNames[fColor]=nm; else delete state.colorNames[fColor]; }
   if(editingId){
     const e=state.entries.find(x=>x.id===editingId);
     if(state.sample){ dropSample(); state.entries.push({...e,...rec,id:uid()}); } else if(e) Object.assign(e,rec);
     delPhotos(removedPhotos); save(); render(); endEdit(); toast("Saved"); closeDrawer();
   } else { addEntries([rec]); toast(`Added “${title}”`); }
-  ["fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; setToday(); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
+  ["fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; setToday(); setFColor(""); renderFSwatches(); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
   $("fTitle").focus();
 });
 function addFormPhotos(files,how){
@@ -1724,7 +1768,7 @@ function startEdit(id){
   const [ey,em,ed]=(e.end||"").split("-");
   $("fMulti").checked=!!e.end; $("fEndWrap").hidden=!e.end;
   $("fEYear").value=e.end?ey:""; $("fEMonth").value=em?+em:""; $("fEDay").value=ed?+ed:""; updateDur();
-  $("fTitle").value=e.title; $("fCat").value=e.cat; $("fPlace").value=e.place||""; $("fDesc").value=e.desc||"";
+  $("fTitle").value=e.title; $("fCat").value=e.cat; $("fPlace").value=e.place||""; $("fDesc").value=e.desc||""; setFColor(e.color||"");
   formPhotos=(e.photos||[]).map(id=>({id})); removedPhotos=[]; renderStrip();
   $("formTitle").textContent="Edit event"; $("fSubmit").textContent="Save changes"; $("fCancel").hidden=false; $("fTitle").focus();
   requestAnimationFrame(growAll);
@@ -1739,8 +1783,19 @@ $("fCancel").addEventListener("click",endEdit);
 /* ---------- Toolbar ---------- */
 $("chips").addEventListener("click",ev=>{ const c=ev.target.closest(".chip"); if(!c) return;
   if(c.id==="addEraChip"){ openDrawer("eras"); $("eName").focus(); return; }
+  if(c.id==="showAllChip"){ hiddenColors.clear(); filters=new Set(CATS.map(x=>x[0])); render(); return; }
+  const key=c.dataset.color!==undefined?"c:"+c.dataset.color:c.dataset.cat?"k:"+c.dataset.cat:"";
+  const quick=key && chipClick.key===key && Date.now()-chipClick.t<450; chipClick={key,t:Date.now()};
+  if(quick){ // double-click: show only this color or category
+    chipClick={key:"",t:0};
+    if(c.dataset.color!==undefined){ const all=new Set(state.entries.map(e=>e.color||"")); hiddenColors=new Set([...all].filter(k=>k!==c.dataset.color)); }
+    else { filters=new Set([c.dataset.cat]); }
+    render(); return;
+  }
+  if(c.dataset.color!==undefined){ const k=c.dataset.color; hiddenColors.has(k)?hiddenColors.delete(k):hiddenColors.add(k); render(); return; }
   if(c.dataset.era){ focusEra(c.dataset.era); return; }
   const k=c.dataset.cat; filters.has(k)?filters.delete(k):filters.add(k); render(); });
+let chipClick={key:"",t:0};
 let sT; $("search").addEventListener("input",()=>{ clearTimeout(sT); sT=setTimeout(render,150); });
 $("vTrack").addEventListener("click",()=>{ view="track"; prefs.view=view; savePrefs(); render(); });
 $("vList").addEventListener("click",()=>{ view="list"; prefs.view=view; savePrefs(); render(); });
@@ -1749,7 +1804,7 @@ let nameT; $("personName").addEventListener("input",e=>{ if(mode!=="server") ret
 $("clearSample").addEventListener("click",()=>{ if(!needAccount()) return; dropSample(); save(); render(); $("personName").focus(); });
 $("clearAll").addEventListener("click",ev=>arm(ev.currentTarget,"Clear everything","Click again to erase it all",()=>{
   const ids=state.entries.flatMap(e=>e.photos||[]);
-  state={name:state.sample?"":state.name,entries:[],eras:[],sample:false};
+  state={name:state.sample?"":state.name,entries:[],eras:[],colorNames:{},sample:false};
   delPhotos(ids); renderEraList(); save(); render(); toast("Timeline cleared");
 }));
 $("copyCsv").addEventListener("click",()=>{
@@ -1816,7 +1871,7 @@ function wireDrop(dropId,inputId,handler){
 /* ---------- Spreadsheet ---------- */
 const URL_RE=/https?:\/\/[^\s,;|<>"']+/gi;
 const linksIn=v=>[...new Set(String(v??"").match(URL_RE)||[])];
-const FIELDS=[["end","End date",/^(end|to|until|through|thru|finish)|end ?date|date ?to|end$/],["date","Start date",/date|when|year|time|start|from/],["title","Title",/title|event|what|headline|name|milestone/],["desc","Description",/desc|detail|note|story|summary|text|comment/],["cat","Category",/categ|type|tag|kind|group/],["place","Place",/place|location|where|city|town/],["photos","Photos",/photo|image|picture|^pics?$|img|url|link/]];
+const FIELDS=[["end","End date",/^(end|to|until|through|thru|finish)|end ?date|date ?to|end$/],["date","Start date",/date|when|year|time|start|from/],["title","Title",/title|event|what|headline|name|milestone/],["desc","Description",/desc|detail|note|story|summary|text|comment/],["cat","Category",/categ|type|tag|kind|group/],["place","Place",/place|location|where|city|town/],["color","Color",/colou?r|highlight|label/],["photos","Photos",/photo|image|picture|^pics?$|img|url|link/]];
 let sheet={headers:[],rows:[],map:{},links:[]};
 function guessCat(v){
   const s=String(v||"").toLowerCase().trim(); if(!s) return "milestone";
@@ -1829,8 +1884,23 @@ function guessCat(v){
   if(/facebook|post/.test(s)) return "post";
   return "other";
 }
+// A Color cell can be a color word (blue), a code (#BFDBFE), or a label (Work) that gets its own color
+let sheetLabels=new Map();
+function sheetColor(v){
+  const raw=String(v??"").trim(); if(!raw) return {color:""};
+  const hex=normColor(raw); if(hex) return {color:hex};
+  const w=COLOR_WORDS[raw.toLowerCase()]; if(w) return {color:w};
+  const key=raw.toLowerCase();
+  if(!sheetLabels.has(key)){
+    const named=Object.entries(state.colorNames||{}).find(([c,n])=>n.toLowerCase()===key);
+    let c=named&&named[0];
+    if(!c){ const taken=new Set([...Object.keys(state.colorNames||{}),...[...sheetLabels.values()].map(x=>x.color)]); c=(BOX_COLORS.find(x=>!taken.has(x[0]))||BOX_COLORS[sheetLabels.size%BOX_COLORS.length])[0]; }
+    sheetLabels.set(key,{color:c,label:raw});
+  }
+  return {color:sheetLabels.get(key).color,_label:sheetLabels.get(key).label};
+}
 function sheetRowsToEntries(){
-  const m=sheet.map, out=[], bad=[];
+  const m=sheet.map, out=[], bad=[]; sheetLabels=new Map();
   sheet.rows.forEach((r,i)=>{
     const get=k=> m[k]===""||m[k]==null ? "" : r[m[k]];
     const date=parseDate(get("date")); const title=String(get("title")??"").trim();
@@ -1838,7 +1908,7 @@ function sheetRowsToEntries(){
     let end=parseDate(get("end")); if(end && (!date || tEnd(end)<=tStart(date) || end===date)) end="";
     const pc=m.photos===""||m.photos==null ? null : +m.photos;
     const links = pc==null ? [] : linksIn([r[pc], sheet.links[i]&&sheet.links[i][pc]].join(" "));
-    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2,_links:links};
+    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2,_links:links,...sheetColor(get("color"))};
     (date?out:bad).push(rec);
   });
   return {out,bad};
@@ -1847,7 +1917,7 @@ function renderSheet(){
   const ORDER=["date","end","title","desc","cat","place","photos"];
   $("sheetMap").innerHTML = [...FIELDS].sort((a,b)=>ORDER.indexOf(a[0])-ORDER.indexOf(b[0])).map(([k,l])=>`<label>${l}<select data-f="${k}" id="map-${k}"><option value="">(none)</option>${sheet.headers.map((h,i)=>`<option value="${i}" ${String(sheet.map[k])===String(i)?"selected":""}>${esc(h||"Column "+(i+1))}</option>`).join("")}</select></label>`).join("");
   const {out,bad}=sheetRowsToEntries();
-  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${e._links.length?`[${e._links.length} photo${e._links.length>1?"s":""}] `:""}${esc(e.title)}</span></div>`),
+  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${e.color?`<span class="ctag" style="--bx:${e.color};--bt:${textOn(e.color)}">${esc(e._label||colorLabel(e.color))}</span> `:""}${e._links.length?`[${e._links.length} photo${e._links.length>1?"s":""}] `:""}${esc(e.title)}</span></div>`),
     ...bad.slice(0,10).map(e=>`<div class="bad"><span class="d">Row ${e._row}</span><span class="t">Can't read date “${esc(e._raw)}”</span></div>`)].join("") || `<div><span class="t">No rows found under the header.</span></div>`;
   const nLinks=out.reduce((n,e)=>n+e._links.length,0);
   $("sheetMsg").textContent = `${out.length} rows ready${nLinks?`, with ${nLinks} photo link${nLinks>1?"s":""} to download`:""}${bad.length?`. ${bad.length} skipped because the date couldn't be read`:""}.`;
@@ -1857,7 +1927,10 @@ $("sheetMap").addEventListener("change",e=>{ sheet.map[e.target.dataset.f]=e.tar
 $("sheetImport").addEventListener("click",()=>{
   const {out}=sheetRowsToEntries();
   const jobs=[];
-  const recs=out.map(({_raw,_row,_links,...e})=>{ const id=uid(); if(_links.length) jobs.push({id,row:_row,links:_links,title:e.title}); return {...e,id}; });
+  dropSample();
+  if(!state.colorNames) state.colorNames={};
+  for(const {color,label} of sheetLabels.values()) if(!state.colorNames[color]) state.colorNames[color]=label;
+  const recs=out.map(({_raw,_row,_links,_label,...e})=>{ const id=uid(); if(_links.length) jobs.push({id,row:_row,links:_links,title:e.title}); return {...e,id}; });
   addEntries(recs);
   $("sheetResult").hidden=true;
   if(jobs.length) downloadSheetPhotos(jobs);
@@ -1907,8 +1980,10 @@ $("spStop").addEventListener("click",()=>{ spStop=true; $("spStop").disabled=tru
 wireDrop("sheetDrop","sheetFile",async f=>{
   try{
     if(typeof XLSX==="undefined") throw new Error("The spreadsheet reader didn't load. Check your connection and reload the page.");
-    const wb=XLSX.read(await f.arrayBuffer(),{type:"array",cellDates:true});
-    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
+    // Read every cell as the text you see in the file, so dates aren't shifted by time zones
+    const isText=/\.(csv|tsv|txt)$/i.test(f.name);
+    const wb=XLSX.read(await f.arrayBuffer(),{type:"array",raw:isText,cellDates:false});
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
     if(rows.length<2) throw new Error("That file needs a header row and at least one event row.");
     sheet.headers=rows[0].map(h=>String(h).trim()); sheet.rows=rows.slice(1); sheet.map={};
     // Excel cells can show text but link elsewhere; keep those link targets too

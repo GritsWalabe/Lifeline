@@ -95,8 +95,15 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{10,64}$/;
 const TL_RE = /^t[a-z0-9]{8,40}$/;
 const MAX_TIMELINES = +(process.env.MAX_TIMELINES || 50);
 const newTimelineId = () => "t" + crypto.randomBytes(10).toString("hex");
+function cleanColorNames(m) {
+  const out = {};
+  if (m && typeof m === "object") for (const [k, v] of Object.entries(m).slice(0, 60)) {
+    if (/^#[0-9A-Fa-f]{6}$/.test(k) && typeof v === "string" && v.trim()) out[k.toUpperCase()] = v.trim().slice(0, 60);
+  }
+  return out;
+}
 function cleanDoc(doc) {
-  return { name: String(doc?.name || "").slice(0, 200), entries: Array.isArray(doc?.entries) ? doc.entries : [], eras: Array.isArray(doc?.eras) ? doc.eras : [] };
+  return { name: String(doc?.name || "").slice(0, 200), entries: Array.isArray(doc?.entries) ? doc.entries : [], eras: Array.isArray(doc?.eras) ? doc.eras : [], colorNames: cleanColorNames(doc?.colorNames) };
 }
 const photoIdsOf = (doc) => (doc?.entries || []).flatMap((e) => (Array.isArray(e.photos) ? e.photos : [])).filter((p) => PHOTO_ID_RE.test(p));
 
@@ -372,7 +379,7 @@ app.get("/api/shared/:token", async (req, res) => {
   if (!t) return res.status(404).json({ error: "This share link isn't active. Ask the owner for a new one." });
   const entries = (t.doc.entries || []).map(({ fbts, imp, ...e }) => e); // strip fields only the owner needs
   res.setHeader("Cache-Control", "no-store");
-  res.json({ doc: { name: t.doc.name, entries, eras: t.doc.eras || [] } });
+  res.json({ doc: { name: t.doc.name, entries, eras: t.doc.eras || [], colorNames: t.doc.colorNames || {} } });
 });
 app.get("/api/shared/:token/photos/:id", async (req, res) => {
   const t = await sharedTimeline(req.params.token);
