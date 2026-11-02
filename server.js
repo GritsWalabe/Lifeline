@@ -43,14 +43,17 @@ async function migrate() {
       expires_at TIMESTAMPTZ NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
-    CREATE TABLE IF NOT EXISTS timelines (
-      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS tlines (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       doc JSONB NOT NULL,
       version INT NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       share_token TEXT UNIQUE,
       share_on BOOLEAN NOT NULL DEFAULT false
     );
+    CREATE INDEX IF NOT EXISTS tlines_user ON tlines(user_id);
     CREATE TABLE IF NOT EXISTS photos (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       id TEXT NOT NULL,
@@ -60,6 +63,23 @@ async function migrate() {
       PRIMARY KEY (user_id, id)
     );
   `);
+  // Earlier versions kept one timeline per account in "timelines". Copy each into the new table once,
+  // then keep the old table as a backup under a new name.
+  const old = await q(`SELECT to_regclass('public.timelines') AS t`);
+  if (old.rows[0].t) {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`
+        INSERT INTO tlines(id,user_id,doc,version,created_at,updated_at,share_token,share_on)
+        SELECT 't' || substr(md5(user_id || clock_timestamp()::text || random()::text), 1, 18),
+               user_id, doc, version, updated_at, updated_at, share_token, share_on
+        FROM timelines o WHERE NOT EXISTS (SELECT 1 FROM tlines n WHERE n.user_id = o.user_id)`);
+      await c.query(`ALTER TABLE timelines RENAME TO timelines_v1_backup`);
+      await c.query("COMMIT");
+      console.log("Moved single timelines into the multi-timeline table.");
+    } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
+  }
 }
 
 /* ---------- Helpers ---------- */
@@ -68,6 +88,13 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHOTO_ID_RE = /^p[a-z0-9]{8,40}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{10,64}$/;
+const TL_RE = /^t[a-z0-9]{8,40}$/;
+const MAX_TIMELINES = +(process.env.MAX_TIMELINES || 50);
+const newTimelineId = () => "t" + crypto.randomBytes(10).toString("hex");
+function cleanDoc(doc) {
+  return { name: String(doc?.name || "").slice(0, 200), entries: Array.isArray(doc?.entries) ? doc.entries : [], eras: Array.isArray(doc?.eras) ? doc.eras : [] };
+}
+const photoIdsOf = (doc) => (doc?.entries || []).flatMap((e) => (Array.isArray(e.photos) ? e.photos : [])).filter((p) => PHOTO_ID_RE.test(p));
 
 function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
@@ -205,35 +232,87 @@ app.delete("/api/account", needUser, express.json({ limit: "10kb" }), async (req
   res.json({ ok: true });
 });
 
-/* ---------- Timeline ---------- */
-app.get("/api/timeline", needUser, async (req, res) => {
-  const r = await q(`SELECT doc, version, share_token, share_on FROM timelines WHERE user_id=$1`, [req.user.id]);
-  const t = r.rows[0];
-  if (!t) return res.json({ doc: null, version: 0, share: { on: false, token: null } });
-  res.json({ doc: t.doc, version: t.version, share: { on: t.share_on, token: t.share_on ? t.share_token : null } });
+/* ---------- Timelines (an account can have many) ---------- */
+async function ownTimeline(req, res) {
+  const id = req.params.id;
+  if (!TL_RE.test(id)) { res.status(404).json({ error: "That timeline doesn't exist." }); return null; }
+  const r = await q(`SELECT id, doc, version, share_token, share_on FROM tlines WHERE id=$1 AND user_id=$2`, [id, req.user.id]);
+  if (!r.rows[0]) { res.status(404).json({ error: "That timeline doesn't exist or was deleted." }); return null; }
+  return r.rows[0];
+}
+
+app.get("/api/timelines", needUser, async (req, res) => {
+  const r = await q(
+    `SELECT id, doc->>'name' AS name, jsonb_array_length(COALESCE(doc->'entries','[]'::jsonb)) AS count,
+            share_on, updated_at, created_at
+     FROM tlines WHERE user_id=$1 ORDER BY created_at`, [req.user.id]);
+  res.json({ timelines: r.rows.map((t) => ({ id: t.id, name: t.name || "", count: t.count, shared: t.share_on, updated: t.updated_at })) });
 });
 
-// Saves the whole timeline. "version" must match what the page last loaded, so an older copy open
+app.post("/api/timelines", needUser, express.json({ limit: "25mb" }), async (req, res) => {
+  const n = await q(`SELECT count(*)::int AS n FROM tlines WHERE user_id=$1`, [req.user.id]);
+  if (n.rows[0].n >= MAX_TIMELINES) return res.status(400).json({ error: `You can have up to ${MAX_TIMELINES} timelines. Delete one you no longer need first.` });
+  const id = newTimelineId();
+  await q(`INSERT INTO tlines(id,user_id,doc) VALUES($1,$2,$3)`, [id, req.user.id, cleanDoc(req.body?.doc)]);
+  res.json({ id, version: 1 });
+});
+
+app.get("/api/timelines/:id", needUser, async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  res.json({ id: t.id, doc: t.doc, version: t.version, share: { on: t.share_on, token: t.share_on ? t.share_token : null } });
+});
+
+// Saves a whole timeline. "version" must match what the page last loaded, so an older copy open
 // on another device can't silently overwrite newer changes.
-app.put("/api/timeline", needUser, express.json({ limit: "25mb" }), async (req, res) => {
+app.put("/api/timelines/:id", needUser, express.json({ limit: "25mb" }), async (req, res) => {
+  if (!TL_RE.test(req.params.id)) return res.status(404).json({ error: "That timeline doesn't exist." });
   const { doc, version } = req.body || {};
   if (!doc || typeof doc !== "object" || !Array.isArray(doc.entries)) return res.status(400).json({ error: "Timeline data is missing." });
-  const clean = { name: String(doc.name || "").slice(0, 200), entries: doc.entries, eras: Array.isArray(doc.eras) ? doc.eras : [] };
-  if (!version) {
-    const r = await q(
-      `INSERT INTO timelines(user_id,doc,version) VALUES($1,$2,1) ON CONFLICT (user_id) DO NOTHING RETURNING version`,
-      [req.user.id, clean]
-    );
-    if (r.rows[0]) return res.json({ version: 1 });
-  } else {
-    const r = await q(
-      `UPDATE timelines SET doc=$2, version=version+1, updated_at=now() WHERE user_id=$1 AND version=$3 RETURNING version`,
-      [req.user.id, clean, version]
-    );
-    if (r.rows[0]) return res.json({ version: r.rows[0].version });
+  const r = await q(
+    `UPDATE tlines SET doc=$3, version=version+1, updated_at=now() WHERE id=$1 AND user_id=$2 AND version=$4 RETURNING version`,
+    [req.params.id, req.user.id, cleanDoc(doc), +version || 0]);
+  if (r.rows[0]) return res.json({ version: r.rows[0].version });
+  const cur = await q(`SELECT doc, version FROM tlines WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  if (!cur.rows[0]) return res.status(404).json({ error: "That timeline was deleted." });
+  res.status(409).json({ error: "This timeline was changed on another device.", doc: cur.rows[0].doc, version: cur.rows[0].version });
+});
+
+app.delete("/api/timelines/:id", needUser, async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  await q(`DELETE FROM tlines WHERE id=$1 AND user_id=$2`, [t.id, req.user.id]);
+  // Remove this timeline's photos unless another of the person's timelines still uses them
+  const others = await q(`SELECT doc FROM tlines WHERE user_id=$1`, [req.user.id]);
+  const keep = new Set(others.rows.flatMap((r) => photoIdsOf(r.doc)));
+  for (const pid of photoIdsOf(t.doc)) {
+    if (keep.has(pid)) continue;
+    await q(`DELETE FROM photos WHERE user_id=$1 AND id=$2`, [req.user.id, pid]);
+    await fsp.rm(path.join(userDir(req.user.id), pid), { force: true });
   }
-  const cur = await q(`SELECT doc, version FROM timelines WHERE user_id=$1`, [req.user.id]);
-  res.status(409).json({ error: "This timeline was changed on another device.", doc: cur.rows[0]?.doc, version: cur.rows[0]?.version });
+  res.json({ ok: true });
+});
+
+// Moves events (with their photos) from one of the person's timelines to another, in one step
+app.post("/api/timelines/:id/move", needUser, express.json({ limit: "100kb" }), async (req, res) => {
+  const from = req.params.id, to = String(req.body?.to || "");
+  const ids = new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String));
+  if (!TL_RE.test(from) || !TL_RE.test(to) || from === to || !ids.size) return res.status(400).json({ error: "Choose a different timeline to move to." });
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    const r = await c.query(`SELECT id, doc FROM tlines WHERE user_id=$1 AND id = ANY($2) ORDER BY id FOR UPDATE`, [req.user.id, [from, to]]);
+    const src = r.rows.find((x) => x.id === from), dst = r.rows.find((x) => x.id === to);
+    if (!src || !dst) { await c.query("ROLLBACK"); return res.status(404).json({ error: "One of those timelines no longer exists." }); }
+    const moving = src.doc.entries.filter((e) => ids.has(String(e.id)));
+    if (!moving.length) { await c.query("ROLLBACK"); return res.status(400).json({ error: "Those events are no longer on this timeline." }); }
+    const taken = new Set(dst.doc.entries.map((e) => String(e.id)));
+    moving.forEach((e) => { if (taken.has(String(e.id))) e.id = crypto.randomBytes(5).toString("hex"); });
+    const srcDoc = { ...src.doc, entries: src.doc.entries.filter((e) => !ids.has(String(e.id))) };
+    const dstDoc = { ...dst.doc, entries: [...dst.doc.entries, ...moving] };
+    const a = await c.query(`UPDATE tlines SET doc=$2, version=version+1, updated_at=now() WHERE id=$1 RETURNING version`, [from, srcDoc]);
+    await c.query(`UPDATE tlines SET doc=$2, version=version+1, updated_at=now() WHERE id=$1`, [to, dstDoc]);
+    await c.query("COMMIT");
+    res.json({ moved: moving.length, version: a.rows[0].version, doc: srcDoc });
+  } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
 });
 
 /* ---------- Photos ---------- */
@@ -269,36 +348,33 @@ app.delete("/api/photos/:id", needUser, async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Sharing ---------- */
-app.post("/api/share", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+/* ---------- Sharing (each timeline has its own link) ---------- */
+app.post("/api/timelines/:id/share", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
   const on = !!req.body?.on, fresh = !!req.body?.newLink;
-  const cur = await q(`SELECT share_token FROM timelines WHERE user_id=$1`, [req.user.id]);
-  if (!cur.rows[0]) return res.status(400).json({ error: "Add something to your timeline before sharing it." });
-  let token = cur.rows[0].share_token;
+  let token = t.share_token;
   if (on && (!token || fresh)) token = rid(12);
-  await q(`UPDATE timelines SET share_on=$2, share_token=$3 WHERE user_id=$1`, [req.user.id, on, token]);
+  await q(`UPDATE tlines SET share_on=$2, share_token=$3 WHERE id=$1`, [t.id, on, token]);
   res.json({ on, token: on ? token : null });
 });
 
-async function sharedOwner(token) {
+async function sharedTimeline(token) {
   if (!TOKEN_RE.test(token)) return null;
-  const r = await q(`SELECT user_id, doc FROM timelines WHERE share_token=$1 AND share_on=true`, [token]);
+  const r = await q(`SELECT user_id, doc FROM tlines WHERE share_token=$1 AND share_on=true`, [token]);
   return r.rows[0] || null;
 }
 app.get("/api/shared/:token", async (req, res) => {
-  const t = await sharedOwner(req.params.token);
+  const t = await sharedTimeline(req.params.token);
   if (!t) return res.status(404).json({ error: "This share link isn't active. Ask the owner for a new one." });
-  // Strip fields only the owner needs
-  const entries = (t.doc.entries || []).map(({ fbts, imp, ...e }) => e);
+  const entries = (t.doc.entries || []).map(({ fbts, imp, ...e }) => e); // strip fields only the owner needs
   res.setHeader("Cache-Control", "no-store");
   res.json({ doc: { name: t.doc.name, entries, eras: t.doc.eras || [] } });
 });
-app.get("/api/shared/:token/photos/:id", async (req, res, next) => {
-  try {
-    const t = await sharedOwner(req.params.token);
-    if (!t) return res.status(404).end();
-    await sendPhoto(res, t.user_id, req.params.id);
-  } catch (e) { next(e); }
+app.get("/api/shared/:token/photos/:id", async (req, res) => {
+  const t = await sharedTimeline(req.params.token);
+  // Only photos that belong to events on this shared timeline
+  if (!t || !photoIdsOf(t.doc).includes(req.params.id)) return res.status(404).end();
+  await sendPhoto(res, t.user_id, req.params.id);
 });
 
 /* ---------- Claude review of Facebook posts ---------- */

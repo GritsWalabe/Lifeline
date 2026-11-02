@@ -7,8 +7,8 @@ Build a timeline of a life from a simple form, a spreadsheet, or a Facebook down
 - Eras: shaded stretches of time like "Texas Tech" or "Teaching in Garland"
 - Spreadsheet import (.xlsx, .xls, .csv)
 - Facebook import with photos, an optional Claude review that picks out real life events, and progress you can stop and resume
-- Accounts with email and password; each person's timeline is private
-- Share links: anyone with the link can view a timeline, no account needed
+- Accounts with email and password; each person can keep several private timelines (a life, a job, a hobby) and move events between them
+- Share links per timeline: anyone with the link can view that one timeline, no account needed
 - Delete-account and data download for every user
 
 ## What's in here
@@ -44,6 +44,7 @@ Railway redeploys automatically whenever you push to GitHub.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `MAX_TIMELINES` | `50` | How many timelines one account can have. |
 | `REVIEW_DAILY_LIMIT` | `50` | How many Claude review batches (up to 60 posts each) one person can run per day. Keeps your API bill predictable. |
 | `CLAUDE_MODEL` | `claude-haiku-5-5` | Which Claude model reviews Facebook posts. |
 | `PGSSL` | off | Set to `1` only if you connect to a database that requires SSL from outside Railway. |

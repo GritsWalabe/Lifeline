@@ -280,8 +280,22 @@ img{max-width:100%}
 #auth{padding:16px;overflow:auto}
 .share-url{display:flex;gap:6px}
 .share-url input{flex:1;min-width:0;font-family:var(--f-mono);font-size:13px}
-body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
+body.readonly #tlWrap, body.readonly #dMove, body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
 body.readonly #personName{pointer-events:none}
+.tl-wrap{position:relative;align-self:flex-start}
+.tl-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px 3px 12px;cursor:pointer;font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tl-btn:hover{border-color:var(--muted);color:var(--ink)}
+.tl-btn b{font-weight:500;color:var(--ink)}
+.tl-btn svg{width:12px;height:12px}
+.tl-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.2);width:min(340px,calc(100vw - 32px));padding:6px;display:flex;flex-direction:column}
+.tl-menu .h{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:8px 10px 4px}
+.tl-item{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--ink)}
+.tl-item:hover,.tl-item:focus-visible{background:var(--bg)}
+.tl-item .ck{color:var(--accent);font-weight:700}
+.tl-item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--f-display);font-weight:500}
+.tl-item .ct{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.tl-item.new{color:var(--accent);font-weight:600;border-top:1px solid var(--line);border-radius:0 0 6px 6px;margin-top:4px}
+#dMove{width:auto;font-size:14px;padding:6px 10px;margin-right:auto}
 .foot{padding-block:24px 40px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
 .foot a{color:var(--muted)}
 .hint a,.auth-card a{color:var(--accent)}
@@ -292,8 +306,12 @@ body.readonly #personName{pointer-events:none}
 <div class="wrap">
   <header class="top">
     <div class="who">
-      <span class="brand">Lifeline · timeline of</span>
-      <input id="personName" type="text" aria-label="Person's name" placeholder="Whose timeline is this?">
+      <span class="brand" id="brandPlain">Lifeline</span>
+      <div class="tl-wrap" id="tlWrap" hidden>
+        <button class="tl-btn" id="tlBtn" aria-haspopup="true" aria-expanded="false">Lifeline · <b id="tlBtnText">My timelines</b><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+        <div class="tl-menu" id="tlMenu" role="menu" hidden></div>
+      </div>
+      <input id="personName" type="text" aria-label="Timeline name" placeholder="Name this timeline">
     </div>
     <div class="right">
       <div class="stats">
@@ -335,7 +353,7 @@ body.readonly #personName{pointer-events:none}
     <button class="btn sm" id="zOut" aria-label="Zoom out">−</button>
     <input type="range" id="zRange" min="0" max="1000" value="500" aria-label="Zoom level">
     <button class="btn sm" id="zIn" aria-label="Zoom in">+</button>
-    <button class="btn sm" id="zFit">Whole life</button>
+    <button class="btn sm" id="zFit">Show all</button>
     <span class="hint" id="zHint">Drag or scroll sideways. Events grow as you pass over them.</span>
   </div>
 </div>
@@ -363,6 +381,7 @@ body.readonly #personName{pointer-events:none}
       <div class="sheet-body" id="dBody"></div>
     </div>
     <div class="sheet-foot">
+      <select id="dMove" aria-label="Move this event to another timeline" hidden></select>
       <button class="btn" id="dEdit">Edit</button>
       <button class="btn danger" id="dDel">Delete</button>
     </div>
@@ -556,12 +575,17 @@ body.readonly #personName{pointer-events:none}
         </div>
         <div class="card">
           <h3>Start over</h3>
-          <p>Removes every event, era and photo from your timeline. Your account stays.</p>
+          <p>Removes every event, era and photo from this timeline. Your other timelines and your account stay.</p>
           <div class="btns"><button class="btn danger" id="clearAll">Clear everything</button></div>
+        </div>
+        <div class="card" id="delTlCard" hidden>
+          <h3>Delete this timeline</h3>
+          <p id="delTlText">Permanently deletes this timeline with its events, eras and photos. Its share link stops working. Your other timelines aren't affected.</p>
+          <div class="btns"><button class="btn danger" id="delTl">Delete this timeline</button></div>
         </div>
         <div class="card">
           <h3>Delete your account</h3>
-          <p>Permanently deletes your account, timeline and photos from Lifeline. Share links stop working. This can't be undone.</p>
+          <p>Permanently deletes your account and all of your timelines and photos from Lifeline. Share links stop working. This can't be undone.</p>
           <label>Password<input type="password" id="delPw" autocomplete="current-password"></label>
           <div id="delMsg" hidden></div>
           <div class="btns"><button class="btn danger" id="delAcct">Delete my account</button></div>
@@ -585,6 +609,16 @@ body.readonly #personName{pointer-events:none}
     <p id="authSwitchText">Already have an account? <button type="button" class="auth-switch" id="authSwitch">Sign in</button></p>
     <button type="button" class="btn" id="authLater">Look around the example first</button>
     <p class="hint"><a href="/privacy" target="_blank" rel="noopener">How Lifeline handles your data</a></p>
+  </form>
+</div>
+
+<div class="back" id="newTl" hidden>
+  <form class="auth-card" id="newTlForm" role="dialog" aria-modal="true" aria-labelledby="newTlTitle" autocomplete="off">
+    <h2 id="newTlTitle">New timeline</h2>
+    <p>Keep a separate set of events, like a job, a project or a hobby. It has its own eras and its own share link, and stays apart from your other timelines.</p>
+    <label>Name<input type="text" id="newTlName" maxlength="120" placeholder="Coaching log" required></label>
+    <div id="newTlMsg" hidden></div>
+    <div class="btns"><button class="btn primary" type="submit" id="newTlGo">Create timeline</button><button class="btn" type="button" id="newTlCancel">Cancel</button></div>
   </form>
 </div>
 
@@ -653,7 +687,7 @@ function erasAt(t){ return (state.eras||[]).filter(e=>t>=eraStart(e)&&t<eraEnd(e
 /* ---------- App state ---------- */
 let state = makeSample();
 let mode = "starting";          // starting | server (signed in) | signedout | shared (view-only link)
-let cloud = { uid:null }, me=null, aiOn=false, shareToken=null;
+let cloud = { uid:null }, me=null, aiOn=false, shareToken=null, tlId=null, tlList=[];
 const sharedToken = (location.pathname.match(/^\/s\/([A-Za-z0-9_-]{10,64})\/?$/)||[])[1]||null;
 let editingId=null, visible=[], filters=new Set(CATS.map(c=>c[0]));
 let formPhotos=[], removedPhotos=[];
@@ -661,7 +695,8 @@ let prefs = (()=>{ try{ return JSON.parse(localStorage.getItem("lifeline.prefs")
 let view = prefs.view==="list" ? "list" : "track";
 function savePrefs(){ try{ localStorage.setItem("lifeline.prefs", JSON.stringify(prefs)); }catch(e){} }
 function loadLocal(key){ try{ const s=JSON.parse(localStorage.getItem(key)); if(s && Array.isArray(s.entries)) return s; }catch(e){} return null; }
-function saveLocal(){ if(state.sample||!cloud.uid) return; try{ localStorage.setItem(LOCAL_KEY+":"+cloud.uid, JSON.stringify(state)); }catch(e){} }
+const tlKey=id=>LOCAL_KEY+":"+cloud.uid+":"+id;
+function saveLocal(){ if(state.sample||!cloud.uid||!tlId) return; try{ localStorage.setItem(tlKey(tlId), JSON.stringify(state)); }catch(e){} }
 function save(){ saveLocal(); if(mode==="server") scheduleCloud(); }
 
 /* ---------- Status pill ---------- */
@@ -823,7 +858,8 @@ function savePending(){ if(!cloud.uid) return; try{ localStorage.setItem(pending
 const KEEP_FIELDS=["id","date","end","title","desc","cat","place","src","fbts","photos","videos","imp"];
 function slim(e){ const o={}; for(const k of KEEP_FIELDS) if(e[k]!=null && e[k]!=="" && !(Array.isArray(e[k])&&!e[k].length)) o[k]=e[k]; return o; }
 function docOut(){ return {name:state.name||"", entries:state.entries.map(slim), eras:(state.eras||[]).map(({id,name,start,end,color})=>({id,name,start,end:end||"",color}))}; }
-function docIn(d){ return {name:d.name||"", entries:Array.isArray(d.entries)?d.entries:[], eras:Array.isArray(d.eras)?d.eras:[], sample:false}; }
+function fixEntry(e){ return CAT_LABEL[e.cat] ? e : {...e, cat:"other"}; }
+function docIn(d){ return {name:d.name||"", entries:Array.isArray(d.entries)?d.entries.filter(e=>e&&typeof e.date==="string"&&/^\d{4}/.test(e.date)).map(fixEntry):[], eras:Array.isArray(d.eras)?d.eras:[], sample:false}; }
 
 async function api(path,opts={}){
   const o={method:opts.method||"GET", headers:{...(opts.headers||{})}, credentials:"same-origin", signal:opts.signal};
@@ -848,18 +884,114 @@ async function initServer(){
 async function signedIn(user){
   me=user; cloud.uid=user.id; mode="server"; loadPending();
   $("acctEmail").textContent=`Signed in as ${user.email}.`;
-  const cached=loadLocal(LOCAL_KEY+":"+user.id);
-  if(cached){ state=docIn(cached); render(); }
+  $("tlWrap").hidden=false; $("brandPlain").hidden=true;
   refreshStatus();
   try{
-    const t=await api("/api/timeline");
-    version=t.version||0; shareToken=t.share&&t.share.on?t.share.token:null; renderShare();
-    if(t.doc){ state=docIn(t.doc); lastSent=JSON.stringify(docOut()); saveLocal(); }
-    else if(!cached){ state=makeSample(); }
-    render(); renderEraList();
-  }catch(e){ cloudErr="Couldn't load your timeline. Check your connection and reload."; }
+    const r=await api("/api/timelines");
+    tlList=r.timelines||[];
+    let want=null; try{ want=localStorage.getItem("lifeline.cur:"+user.id); }catch(e){}
+    const pick=tlList.find(t=>t.id===want)||tlList[0];
+    if(pick) await loadTimeline(pick.id);
+    else { tlId=null; version=0; shareToken=null; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
+  }catch(e){ cloudErr="Couldn't load your timelines. Check your connection and reload."; }
   refreshStatus(); pumpUploads(); checkImport();
 }
+async function loadTimeline(id){
+  const cached=loadLocal(tlKey(id));
+  tlId=id; try{ localStorage.setItem("lifeline.cur:"+cloud.uid,id); }catch(e){}
+  if(cached){ state=docIn(cached); render(); }
+  renderSwitcher();
+  const t=await api(`/api/timelines/${id}`);
+  version=t.version||0; shareToken=t.share&&t.share.on?t.share.token:null;
+  state=docIn(t.doc); lastSent=JSON.stringify(docOut()); saveLocal();
+  closeDetail(); render(); renderEraList(); renderShare(); renderSwitcher(); refreshStatus();
+}
+async function switchTimeline(id){
+  if(id===tlId) return;
+  await flushCloud();
+  if(cloudErr && mode==="server"){ toast("Your last change hasn't saved yet. Try again in a moment."); return; }
+  try{ await loadTimeline(id); toast(`Switched to ${tlName(tlList.find(t=>t.id===id))}`); }
+  catch(e){ toast(e.message); refreshList(); }
+}
+async function refreshList(){ try{ tlList=(await api("/api/timelines")).timelines||[]; renderSwitcher(); }catch(e){} }
+const tlName=t=>(t&&t.name&&t.name.trim())||"Untitled timeline";
+function syncListEntry(){ const t=tlList.find(x=>x.id===tlId); if(t){ t.name=state.name||""; t.count=state.entries.length; } renderSwitcher(); }
+
+/* ---------- Timeline switcher ---------- */
+function renderSwitcher(){
+  const n=tlList.length;
+  $("tlBtnText").textContent = n>1 ? `${n} timelines` : "My timelines";
+  const cur=tlList.find(t=>t.id===tlId);
+  $("delTlCard").hidden=!cur;
+  if(cur) $("delTlText").textContent=`Permanently deletes “${tlName(cur)}” with its events, eras and photos. Its share link stops working. Your other timelines aren't affected.`;
+  $("tlMenu").innerHTML = `<div class="h">Your timelines</div>`
+    + (n ? tlList.map(t=>`<button class="tl-item" role="menuitemradio" aria-checked="${t.id===tlId}" data-tl="${t.id}"><span class="ck">${t.id===tlId?"✓":""}</span><span class="nm">${esc(tlName(t))}</span><span class="ct">${t.count} event${t.count===1?"":"s"}</span></button>`).join("")
+         : `<div class="tl-item" style="cursor:default"><span></span><span class="hint">Your first timeline is saved once you add something.</span><span></span></div>`)
+    + `<button class="tl-item new" role="menuitem" id="tlNew"><span>+</span><span>New timeline</span><span></span></button>`;
+  const others=tlList.filter(t=>t.id!==tlId);
+  $("dMove").innerHTML=`<option value="">Move to another timeline…</option>`+others.map(t=>`<option value="${t.id}">${esc(tlName(t))}</option>`).join("");
+  $("dMove").hidden=!others.length||state.sample||!tlId;
+}
+function toggleMenu(open){
+  const m=$("tlMenu"); open = open===undefined ? m.hidden : open;
+  m.hidden=!open; $("tlBtn").setAttribute("aria-expanded",open);
+  if(open){ const f=m.querySelector('[aria-checked="true"]')||m.querySelector(".tl-item"); if(f) f.focus(); }
+}
+$("tlBtn").addEventListener("click",e=>{ e.stopPropagation(); toggleMenu(); });
+document.addEventListener("click",e=>{ if(!$("tlMenu").hidden && !e.target.closest("#tlWrap")) toggleMenu(false); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&!$("tlMenu").hidden){ toggleMenu(false); $("tlBtn").focus(); } });
+$("tlMenu").addEventListener("click",e=>{
+  const b=e.target.closest(".tl-item"); if(!b) return;
+  toggleMenu(false);
+  if(b.id==="tlNew") return openNewTl();
+  if(b.dataset.tl) switchTimeline(b.dataset.tl);
+});
+function openNewTl(){ $("newTl").hidden=false; lock(); $("newTlName").value=""; $("newTlMsg").hidden=true; setTimeout(()=>$("newTlName").focus(),30); }
+function closeNewTl(){ $("newTl").hidden=true; unlockIfClear(); }
+$("newTlCancel").addEventListener("click",closeNewTl);
+$("newTl").addEventListener("click",e=>{ if(e.target===$("newTl")) closeNewTl(); });
+$("newTlForm").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  const name=$("newTlName").value.trim(); if(!name) return;
+  const btn=$("newTlGo"); btn.disabled=true;
+  try{
+    await flushCloud();
+    const r=await api("/api/timelines",{method:"POST",json:{doc:{name,entries:[],eras:[]}}});
+    tlList.push({id:r.id,name,count:0,shared:false});
+    closeNewTl(); await loadTimeline(r.id);
+    toast(`Created “${name}”. Add its first event with Add & import.`);
+  }catch(e){ const m=$("newTlMsg"); m.hidden=false; m.className="msg err"; m.textContent=e.message; }
+  btn.disabled=false;
+});
+$("delTl").addEventListener("click",ev=>arm(ev.currentTarget,"Delete this timeline","Click again to delete it for good",async()=>{
+  const gone=tlId, name=tlName(tlList.find(t=>t.id===gone));
+  try{
+    clearTimeout(cloudTimer); cloudTimer=null;
+    await api(`/api/timelines/${gone}`,{method:"DELETE"});
+    try{ localStorage.removeItem(tlKey(gone)); }catch(e){}
+    tlList=tlList.filter(t=>t.id!==gone);
+    closeDrawer();
+    if(tlList.length) await loadTimeline(tlList[0].id);
+    else { tlId=null; version=0; shareToken=null; lastSent=null; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
+    toast(`Deleted “${name}”`);
+  }catch(e){ toast(e.message); }
+}));
+$("dMove").addEventListener("change",async e=>{
+  const to=e.target.value; e.target.value=""; if(!to||!detailId) return;
+  const id=detailId, dest=tlName(tlList.find(t=>t.id===to));
+  const i=visible.findIndex(x=>x.id===id);
+  try{
+    await flushCloud();
+    const r=await api(`/api/timelines/${tlId}/move`,{method:"POST",json:{to,ids:[id]}});
+    version=r.version; state=docIn(r.doc); lastSent=JSON.stringify(docOut()); saveLocal();
+    try{ localStorage.removeItem(tlKey(to)); }catch(err){}
+    const t=tlList.find(x=>x.id===to); if(t) t.count+=r.moved;
+    render(); renderEraList(); syncListEntry();
+    toast(`Moved to “${dest}”`);
+    const n=visible[i]||visible[i-1]; if(n){ detailId=n.id; detailPhoto=0; drawDetail(); } else closeDetail();
+  }catch(err){ toast(err.message); }
+});
+
 async function loadShared(){
   mode="shared"; document.body.classList.add("readonly");
   $("sharedBanner").hidden=false; $("personName").readOnly=true;
@@ -883,13 +1015,23 @@ async function flushCloud(){
   if(str===lastSent){ cloudErr=""; refreshStatus(); return; }
   cloudBusy=true; refreshStatus();
   try{
-    const r=await api("/api/timeline",{method:"PUT",json:{doc:body,version}});
-    version=r.version; lastSent=str; cloudErr="";
+    if(!tlId){
+      // First save on an account with no timeline yet: create it
+      const r=await api("/api/timelines",{method:"POST",json:{doc:body}});
+      tlId=r.id; version=r.version; lastSent=str; cloudErr="";
+      try{ localStorage.setItem("lifeline.cur:"+cloud.uid,tlId); }catch(e){}
+      tlList.push({id:tlId,name:body.name,count:body.entries.length,shared:false});
+    } else {
+      const r=await api(`/api/timelines/${tlId}`,{method:"PUT",json:{doc:body,version}});
+      version=r.version; lastSent=str; cloudErr="";
+    }
+    syncListEntry();
   }catch(e){
     if(e.status===409 && e.data && e.data.doc){
       version=e.data.version; state=docIn(e.data.doc); lastSent=JSON.stringify(docOut()); saveLocal(); render(); renderEraList(); cloudErr="";
       toast("This timeline was changed on another device, so the newest version was loaded. Your last change wasn't saved, so please make it again.");
     } else if(e.status===401){ cloudErr="You've been signed out. Sign in again to save."; showAuth("login"); }
+    else if(e.status===404 && tlId){ cloudErr="This timeline was deleted on another device."; refreshList(); }
     else if(e.status===413){ cloudErr="Your timeline is too large to save in one go."; }
     else { cloudErr="Not saved yet. Retrying…"; clearTimeout(retryT); retryT=setTimeout(flushCloud,15000); }
   }
@@ -970,14 +1112,15 @@ function renderShare(){
   $("shareToggle").className = on ? "btn" : "btn primary";
   if(on) $("shareUrl").value=`${location.origin}/s/${shareToken}`;
   $("shareText").textContent = on
-    ? "Anyone with this link can see your timeline, eras and photos. They can't change anything and don't need an account. Turn the link off any time."
-    : "Create a link anyone can open to see your timeline, eras and photos. They can look but can't change anything, and they don't need an account.";
+    ? "Anyone with this link can see this timeline, its eras and photos. They can't change anything, can't see your other timelines, and don't need an account. Turn the link off any time."
+    : "Create a link anyone can open to see this timeline, its eras and photos. They can look but can't change anything, can't see your other timelines, and don't need an account.";
 }
 async function setShare(on,newLink){
   if(state.sample) return toast("Add something of your own before sharing your timeline.");
   try{
     await flushCloud();
-    const r=await api("/api/share",{method:"POST",json:{on,newLink:!!newLink}});
+    if(!tlId) return toast("Add something to this timeline before sharing it.");
+    const r=await api(`/api/timelines/${tlId}/share`,{method:"POST",json:{on,newLink:!!newLink}});
     shareToken=r.on?r.token:null; renderShare();
     toast(on?(newLink?"New link made. The old link no longer works.":"Share link created"):"Share link turned off");
   }catch(e){ toast(e.message); }
@@ -1005,7 +1148,7 @@ $("delAcct").addEventListener("click",ev=>arm(ev.currentTarget,"Delete my accoun
   const m=$("delMsg");
   try{
     await api("/api/account",{method:"DELETE",json:{password:$("delPw").value}});
-    try{ localStorage.removeItem(LOCAL_KEY+":"+cloud.uid); localStorage.removeItem(pendingKey()); }catch(e){}
+    try{ Object.keys(localStorage).filter(k=>k.startsWith(LOCAL_KEY+":"+cloud.uid)||k==="lifeline.cur:"+cloud.uid).forEach(k=>localStorage.removeItem(k)); localStorage.removeItem(pendingKey()); }catch(e){}
     try{ await idbS("imp","readwrite",s=>s.delete("fb:"+cloud.uid)); }catch(e){}
     location.href="/";
   }catch(e){ m.hidden=false; m.className="msg err"; m.textContent=e.message; }
@@ -1286,7 +1429,7 @@ function updateOvWin(){
 /* ---------- Detail sheet ---------- */
 let detailId=null, detailPhoto=0;
 function lock(){ document.body.classList.add("locked"); }
-function unlockIfClear(){ if($("detail").hidden&&$("drawer").hidden&&$("lb").hidden&&$("auth").hidden) document.body.classList.remove("locked"); }
+function unlockIfClear(){ if($("detail").hidden&&$("drawer").hidden&&$("lb").hidden&&$("auth").hidden&&$("newTl").hidden) document.body.classList.remove("locked"); }
 function openDetail(id){ detailId=id; detailPhoto=0; $("detail").hidden=false; lock(); drawDetail(); $("dClose").focus(); }
 function closeDetail(){ $("detail").hidden=true; detailId=null; armReset($("dDel"),"Delete"); unlockIfClear(); }
 function drawDetail(){
