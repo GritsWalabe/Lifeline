@@ -479,12 +479,19 @@ body.readonly #personName{pointer-events:none}
         <h3>Upload a spreadsheet</h3>
         <p>Excel (.xlsx, .xls) or CSV. One row per event, with a header row. Columns are matched automatically and you can change the matching below.</p>
         <label class="drop" id="sheetDrop"><input type="file" id="sheetFile" accept=".xlsx,.xls,.csv,.tsv,.ods"><span><strong>Choose a file</strong> or drop it here</span></label>
-        <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code>. Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
+        <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code> <code>Photos</code> (links to pictures; several in one cell is fine). Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
         <div id="sheetResult" class="stack" hidden>
           <div class="map" id="sheetMap"></div>
           <div class="preview" id="sheetPreview"></div>
           <div id="sheetMsg" class="hint"></div>
           <button class="btn primary" id="sheetImport">Add rows</button>
+        </div>
+        <div id="sheetPhotos" class="card" hidden>
+          <h3>Downloading photos</h3>
+          <div class="progress"><i id="spBar"></i></div>
+          <p id="spText" class="hint"></p>
+          <div class="btns"><button class="btn" id="spStop">Stop</button></div>
+          <div id="spFails" class="preview" hidden></div>
         </div>
       </div>
 
@@ -1807,8 +1814,10 @@ function wireDrop(dropId,inputId,handler){
 }
 
 /* ---------- Spreadsheet ---------- */
-const FIELDS=[["end","End date",/^(end|to|until|through|thru|finish)|end ?date|date ?to|end$/],["date","Start date",/date|when|year|time|start|from/],["title","Title",/title|event|what|headline|name|milestone/],["desc","Description",/desc|detail|note|story|summary|text|comment/],["cat","Category",/categ|type|tag|kind|group/],["place","Place",/place|location|where|city|town/]];
-let sheet={headers:[],rows:[],map:{}};
+const URL_RE=/https?:\/\/[^\s,;|<>"']+/gi;
+const linksIn=v=>[...new Set(String(v??"").match(URL_RE)||[])];
+const FIELDS=[["end","End date",/^(end|to|until|through|thru|finish)|end ?date|date ?to|end$/],["date","Start date",/date|when|year|time|start|from/],["title","Title",/title|event|what|headline|name|milestone/],["desc","Description",/desc|detail|note|story|summary|text|comment/],["cat","Category",/categ|type|tag|kind|group/],["place","Place",/place|location|where|city|town/],["photos","Photos",/photo|image|picture|^pics?$|img|url|link/]];
+let sheet={headers:[],rows:[],map:{},links:[]};
 function guessCat(v){
   const s=String(v||"").toLowerCase().trim(); if(!s) return "milestone";
   for(const [k,l] of CATS) if(s===k||s===l.toLowerCase()) return k;
@@ -1827,22 +1836,74 @@ function sheetRowsToEntries(){
     const date=parseDate(get("date")); const title=String(get("title")??"").trim();
     if(!title && !String(get("date")??"").trim()) return;
     let end=parseDate(get("end")); if(end && (!date || tEnd(end)<=tStart(date) || end===date)) end="";
-    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2};
+    const pc=m.photos===""||m.photos==null ? null : +m.photos;
+    const links = pc==null ? [] : linksIn([r[pc], sheet.links[i]&&sheet.links[i][pc]].join(" "));
+    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2,_links:links};
     (date?out:bad).push(rec);
   });
   return {out,bad};
 }
 function renderSheet(){
-  const ORDER=["date","end","title","desc","cat","place"];
+  const ORDER=["date","end","title","desc","cat","place","photos"];
   $("sheetMap").innerHTML = [...FIELDS].sort((a,b)=>ORDER.indexOf(a[0])-ORDER.indexOf(b[0])).map(([k,l])=>`<label>${l}<select data-f="${k}" id="map-${k}"><option value="">(none)</option>${sheet.headers.map((h,i)=>`<option value="${i}" ${String(sheet.map[k])===String(i)?"selected":""}>${esc(h||"Column "+(i+1))}</option>`).join("")}</select></label>`).join("");
   const {out,bad}=sheetRowsToEntries();
-  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${esc(e.title)}</span></div>`),
+  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${e._links.length?`[${e._links.length} photo${e._links.length>1?"s":""}] `:""}${esc(e.title)}</span></div>`),
     ...bad.slice(0,10).map(e=>`<div class="bad"><span class="d">Row ${e._row}</span><span class="t">Can't read date “${esc(e._raw)}”</span></div>`)].join("") || `<div><span class="t">No rows found under the header.</span></div>`;
-  $("sheetMsg").textContent = `${out.length} rows ready${bad.length?`, ${bad.length} skipped because the date couldn't be read`:""}.`;
+  const nLinks=out.reduce((n,e)=>n+e._links.length,0);
+  $("sheetMsg").textContent = `${out.length} rows ready${nLinks?`, with ${nLinks} photo link${nLinks>1?"s":""} to download`:""}${bad.length?`. ${bad.length} skipped because the date couldn't be read`:""}.`;
   $("sheetImport").textContent=`Add ${out.length} rows`; $("sheetImport").disabled=!out.length;
 }
 $("sheetMap").addEventListener("change",e=>{ sheet.map[e.target.dataset.f]=e.target.value; renderSheet(); });
-$("sheetImport").addEventListener("click",()=>{ const {out}=sheetRowsToEntries(); addEntries(out.map(({_raw,_row,...e})=>e)); toast(`Added ${out.length} events from the spreadsheet`); $("sheetResult").hidden=true; });
+$("sheetImport").addEventListener("click",()=>{
+  const {out}=sheetRowsToEntries();
+  const jobs=[];
+  const recs=out.map(({_raw,_row,_links,...e})=>{ const id=uid(); if(_links.length) jobs.push({id,row:_row,links:_links,title:e.title}); return {...e,id}; });
+  addEntries(recs);
+  $("sheetResult").hidden=true;
+  if(jobs.length) downloadSheetPhotos(jobs);
+  else toast(`Added ${out.length} events from the spreadsheet`);
+});
+
+/* Photos from links: the server fetches each picture, the page shrinks it and saves it to the event */
+let spStop=false;
+async function fetchLinkedPhoto(url){
+  const r=await fetch("/api/fetch-image",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Lifeline":"1"},body:JSON.stringify({url})});
+  if(!r.ok){ let m="Couldn't download that picture."; try{ m=(await r.json()).error||m; }catch(e){} throw new Error(r.status===401?"You've been signed out.":m); }
+  const blob=await r.blob();
+  return await putPhoto(await shrink(blob));
+}
+async function downloadSheetPhotos(jobs){
+  spStop=false;
+  const total=jobs.reduce((n,j)=>n+j.links.length,0);
+  let done=0, ok=0; const fails=[];
+  $("sheetPhotos").hidden=false; $("spFails").hidden=true; $("spStop").hidden=false; $("spStop").disabled=false; $("spStop").textContent="Stop";
+  const step=()=>{ $("spBar").style.width=(100*done/total)+"%"; $("spText").textContent=`Downloaded ${ok} of ${total} photos${fails.length?`, ${fails.length} couldn't be downloaded`:""}. The events are already on your timeline; photos appear on them as they arrive.`; };
+  step();
+  let next=0, since=0;
+  const worker=async()=>{
+    while(!spStop && next<jobs.length){
+      const j=jobs[next++]; const ids=[];
+      for(const url of j.links){
+        if(spStop) break;
+        try{ ids.push(await fetchLinkedPhoto(url)); ok++; }
+        catch(e){ fails.push({row:j.row,title:j.title,url,why:e.message}); if(/signed out/.test(e.message)) spStop=true; }
+        done++; step();
+      }
+      const ev=state.entries.find(x=>x.id===j.id);
+      if(ev && ids.length){ ev.photos=[...(ev.photos||[]),...ids]; if(++since>=5){ since=0; save(); render(); } }
+    }
+  };
+  await Promise.all([worker(),worker(),worker()]);
+  save(); render();
+  $("spStop").hidden=true;
+  $("spText").textContent = `${spStop?"Stopped. ":""}Added ${ok} of ${total} photos to your events.${fails.length?` ${fails.length} couldn't be downloaded:`:""}`;
+  if(fails.length){
+    $("spFails").hidden=false;
+    $("spFails").innerHTML=fails.slice(0,100).map(f=>`<div class="bad"><span class="d">Row ${f.row}</span><span class="t" title="${esc(f.url)}">${esc(f.why)} · ${esc(f.url)}</span></div>`).join("");
+  }
+  toast(`Added ${ok} photo${ok===1?"":"s"} from your spreadsheet`);
+}
+$("spStop").addEventListener("click",()=>{ spStop=true; $("spStop").disabled=true; $("spStop").textContent="Stopping…"; });
 wireDrop("sheetDrop","sheetFile",async f=>{
   try{
     if(typeof XLSX==="undefined") throw new Error("The spreadsheet reader didn't load. Check your connection and reload the page.");
@@ -1850,9 +1911,25 @@ wireDrop("sheetDrop","sheetFile",async f=>{
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
     if(rows.length<2) throw new Error("That file needs a header row and at least one event row.");
     sheet.headers=rows[0].map(h=>String(h).trim()); sheet.rows=rows.slice(1); sheet.map={};
+    // Excel cells can show text but link elsewhere; keep those link targets too
+    sheet.links=[];
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    if(ws["!ref"]){
+      const rg=XLSX.utils.decode_range(ws["!ref"]); const keep=[];
+      for(let R=rg.s.r;R<=rg.e.r;R++){ const row=[]; let any=false, has=false;
+        for(let C=rg.s.c;C<=rg.e.c;C++){ const c=ws[XLSX.utils.encode_cell({r:R,c:C})]; if(c&&String(c.v??"").trim()!=="") any=true; row[C-rg.s.c]=c&&c.l&&c.l.Target?c.l.Target:""; if(row[C-rg.s.c]) has=true; }
+        if(any) keep.push(row); }
+      sheet.links=keep.slice(1);
+    }
     const used=new Set();
     FIELDS.forEach(([k,,re])=>{ const i=sheet.headers.findIndex((h,i)=>!used.has(i)&&re.test(h.toLowerCase())); if(i>=0){sheet.map[k]=i;used.add(i);} });
     if(sheet.map.date==null) sheet.map.date=0;
+    if(sheet.map.photos==null){
+      // No obvious header: pick the column where most filled cells are links
+      let best=-1, bestN=0;
+      sheet.headers.forEach((h,i)=>{ if(used.has(i)) return; const n=sheet.rows.filter((r,k)=>linksIn([r[i],sheet.links[k]&&sheet.links[k][i]].join(" ")).length).length; if(n>bestN){ best=i; bestN=n; } });
+      if(best>=0 && bestN>=Math.max(1,sheet.rows.length*0.2)){ sheet.map.photos=best; used.add(best); }
+    }
     if(sheet.map.title==null){ const i=sheet.headers.findIndex((h,i)=>!used.has(i)&&i!==sheet.map.date); if(i>=0) sheet.map.title=i; }
     $("sheetResult").hidden=false; renderSheet();
   }catch(err){ $("sheetResult").hidden=false; $("sheetMap").innerHTML=""; $("sheetPreview").innerHTML=""; $("sheetImport").disabled=true; $("sheetMsg").innerHTML=`<span class="msg err" style="display:block">${esc(err.message)}</span>`; }

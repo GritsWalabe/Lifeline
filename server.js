@@ -6,6 +6,10 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import http from "node:http";
+import https from "node:https";
+import dns from "node:dns";
+import net from "node:net";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -375,6 +379,97 @@ app.get("/api/shared/:token/photos/:id", async (req, res) => {
   // Only photos that belong to events on this shared timeline
   if (!t || !photoIdsOf(t.doc).includes(req.params.id)) return res.status(404).end();
   await sendPhoto(res, t.user_id, req.params.id);
+});
+
+/* ---------- Fetch a photo from a link (for spreadsheet imports) ---------- */
+// Only public internet addresses: never the server itself or Railway's private network
+// Separate lists: Node treats IPv4 as IPv6-mapped when one list mixes both, which would block everything
+const blocked4 = new net.BlockList(), blocked6 = new net.BlockList();
+[["0.0.0.0",8],["10.0.0.0",8],["100.64.0.0",10],["127.0.0.0",8],["169.254.0.0",16],["172.16.0.0",12],["192.0.0.0",24],
+ ["192.168.0.0",16],["198.18.0.0",15],["224.0.0.0",4],["240.0.0.0",4]].forEach(([a,p]) => blocked4.addSubnet(a, p, "ipv4"));
+[["::",96],["::ffff:0:0",96],["fc00::",7],["fe80::",10],["ff00::",8],["64:ff9b::",96],["2001:db8::",32]].forEach(([a,p]) => blocked6.addSubnet(a, p, "ipv6"));
+function isPublicIp(addr, family) {
+  if (family === 6) return !blocked6.check(addr, "ipv6"); // ::/96 and ::ffff:0:0/96 cover loopback and every IPv4-mapped form
+  return !blocked4.check(addr, "ipv4");
+}
+function safeLookup(host, opts, cb) {
+  dns.lookup(host, { all: true }, (err, addrs) => {
+    if (err) return cb(err);
+    const ok = addrs.filter((a) => isPublicIp(a.address, a.family));
+    if (!ok.length) return cb(Object.assign(new Error("That link points to a private address."), { code: "EBLOCKED" }));
+    if (opts && opts.all) return cb(null, ok);
+    cb(null, ok[0].address, ok[0].family);
+  });
+}
+// Turn common share links into direct downloads
+function directLink(u) {
+  let m;
+  if ((m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/)) || (m = u.match(/drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([\w-]+)/)))
+    return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  if (/^https:\/\/(www\.)?dropbox\.com\//.test(u)) return u.replace(/([?&])dl=0/, "$1raw=1").replace(/^(?!.*[?&]raw=1)(.*)$/, (x) => x + (x.includes("?") ? "&" : "?") + "raw=1");
+  return u;
+}
+function getOnce(url, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let u; try { u = new URL(url); } catch { return reject(new Error("That isn't a web link.")); }
+    if (!/^https?:$/.test(u.protocol)) return reject(new Error("Only http and https links can be imported."));
+    if (u.port && !["80", "443"].includes(u.port)) return reject(new Error("That link uses an unusual port."));
+    // Links written as a raw IP address skip the name lookup, so check them here too
+    const host = u.hostname.replace(/^\[|\]$/g, ""), fam = net.isIP(host);
+    if (fam && !isPublicIp(host, fam)) return reject(Object.assign(new Error("That link points to a private address."), { code: "EBLOCKED" }));
+    const lib = u.protocol === "https:" ? https : http;
+    const req = lib.get(u, { lookup: safeLookup, timeout: 20000, headers: { "User-Agent": "Mozilla/5.0 (Lifeline photo import)", Accept: "image/*,text/html;q=0.8,*/*;q=0.5" } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { res.resume(); return resolve({ redirect: new URL(res.headers.location, u).href }); }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(res.statusCode === 403 || res.statusCode === 401 ? "The site wouldn't share that image. It may be private or need a sign-in." : res.statusCode === 404 ? "Nothing was found at that link." : `The site answered with an error (${res.statusCode}).`)); }
+      const type = String(res.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      const chunks = []; let size = 0;
+      res.on("data", (c) => { size += c.length; if (size > maxBytes) { req.destroy(); reject(new Error("That image is larger than 15 MB.")); } else chunks.push(c); });
+      res.on("end", () => resolve({ type, body: Buffer.concat(chunks), finalUrl: u.href }));
+      res.on("error", reject);
+    });
+    req.on("timeout", () => req.destroy(new Error("The site took too long to respond.")));
+    req.on("error", (e) => reject(e.code === "EBLOCKED" ? e : new Error(e.message && /ENOTFOUND|EAI_AGAIN/.test(e.message) ? "That website couldn't be found." : e.message || "Couldn't reach that link.")));
+  });
+}
+const IMG_TYPES = /^image\/(jpeg|jpg|png|gif|webp|bmp|avif)$/;
+function sniff(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xd8) return "image/jpeg";
+  if (buf.slice(0, 8).toString("hex") === "89504e470d0a1a0a") return "image/png";
+  if (buf.slice(0, 4).toString() === "GIF8") return "image/gif";
+  if (buf.slice(0, 4).toString() === "RIFF" && buf.slice(8, 12).toString() === "WEBP") return "image/webp";
+  return null;
+}
+async function fetchImage(link) {
+  let url = directLink(String(link).trim()), followedPage = false;
+  for (let hop = 0; hop < 6; hop++) {
+    const r = await getOnce(url, 15 * 1024 * 1024);
+    if (r.redirect) { url = r.redirect; continue; }
+    const type = IMG_TYPES.test(r.type) ? r.type : sniff(r.body);
+    if (type) return { type: type === "image/jpg" ? "image/jpeg" : type, body: r.body };
+    // A web page: use the picture it advertises for previews (og:image), once
+    if (!followedPage && /html/.test(r.type)) {
+      const html = r.body.slice(0, 600000).toString("utf8");
+      const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image)["'][^>]*content=["']([^"']+)["']/i)
+             || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image|twitter:image)["']/i);
+      if (m) { followedPage = true; url = new URL(m[1].replace(/&amp;/g, "&"), r.finalUrl).href; continue; }
+      throw new Error("That link opens a web page, not a picture. Use a direct link to the image.");
+    }
+    throw new Error("That link doesn't lead to a picture.");
+  }
+  throw new Error("That link redirected too many times.");
+}
+app.post("/api/fetch-image", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  if (limited("img:" + req.user.id, 600, 60 * 60e3)) return res.status(429).json({ error: "Too many photo downloads at once. Wait a while and try again." });
+  const link = String(req.body?.url || "");
+  if (!link || link.length > 4000) return res.status(400).json({ error: "No link given." });
+  try {
+    const img = await fetchImage(link);
+    res.setHeader("Content-Type", img.type);
+    res.setHeader("Cache-Control", "no-store");
+    res.end(img.body);
+  } catch (e) {
+    res.status(422).json({ error: e.message || "Couldn't download that picture." });
+  }
 });
 
 /* ---------- Claude review of Facebook posts ---------- */

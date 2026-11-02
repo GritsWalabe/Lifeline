@@ -5,7 +5,7 @@ Build a timeline of a life from a simple form, a spreadsheet, or a Facebook down
 - Horizontal timeline that magnifies events as you pass over them, plus a list view
 - Events with photos and optional date ranges (vacations, trips)
 - Eras: shaded stretches of time like "Texas Tech" or "Teaching in Garland"
-- Spreadsheet import (.xlsx, .xls, .csv)
+- Spreadsheet import (.xlsx, .xls, .csv), including a Photos column of picture links that are downloaded onto each event (Google Drive and Dropbox share links work when shared publicly)
 - Facebook import with photos, an optional Claude review that picks out real life events, and progress you can stop and resume
 - Accounts with email and password; each person can keep several private timelines (a life, a job, a hobby) and move events between them
 - Share links per timeline: anyone with the link can view that one timeline, no account needed
