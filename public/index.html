@@ -496,6 +496,11 @@ body.readonly #personName{pointer-events:none}
         <p class="hint">Suggested columns: <code>Date</code> <code>End date</code> (optional, for trips and other multi-day events) <code>Title</code> <code>Description</code> <code>Category</code> <code>Place</code> <code>Color</code> (a color like blue, a code like #BFDBFE, or a label like Work) <code>Photos</code> (links to pictures; several in one cell is fine). Dates like 2005, 3/2005, 3/14/2005, March 2005 or 2005-03-14 all work.</p>
         <div id="sheetResult" class="stack" hidden>
           <div class="map" id="sheetMap"></div>
+          <div class="card" id="sheetColorAll" hidden>
+            <span class="flabel" style="margin:0">Color for every imported row</span>
+            <div class="swatches" id="scSwatches"></div>
+            <label>What this color means (optional)<input type="text" id="scName" maxlength="60" placeholder="Posts"></label>
+          </div>
           <div class="preview" id="sheetPreview"></div>
           <div id="sheetMsg" class="hint"></div>
           <button class="btn primary" id="sheetImport">Add rows</button>
@@ -1908,28 +1913,46 @@ function sheetRowsToEntries(){
     let end=parseDate(get("end")); if(end && (!date || tEnd(end)<=tStart(date) || end===date)) end="";
     const pc=m.photos===""||m.photos==null ? null : +m.photos;
     const links = pc==null ? [] : linksIn([r[pc], sheet.links[i]&&sheet.links[i][pc]].join(" "));
-    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2,_links:links,...sheetColor(get("color"))};
+    const col = m.color==="all" ? (sheetAll.color?{color:sheetAll.color}:{color:""}) : sheetColor(get("color"));
+    const rec={date,end:end||"",title:title||"(untitled)",desc:String(get("desc")??"").trim(),cat:guessCat(get("cat")),place:String(get("place")??"").trim(),src:"sheet",_raw:get("date"),_row:i+2,_links:links,...col};
     (date?out:bad).push(rec);
   });
   return {out,bad};
 }
 function renderSheet(){
-  const ORDER=["date","end","title","desc","cat","place","photos"];
-  $("sheetMap").innerHTML = [...FIELDS].sort((a,b)=>ORDER.indexOf(a[0])-ORDER.indexOf(b[0])).map(([k,l])=>`<label>${l}<select data-f="${k}" id="map-${k}"><option value="">(none)</option>${sheet.headers.map((h,i)=>`<option value="${i}" ${String(sheet.map[k])===String(i)?"selected":""}>${esc(h||"Column "+(i+1))}</option>`).join("")}</select></label>`).join("");
+  const ORDER=["date","end","title","desc","cat","place","color","photos"];
+  $("sheetMap").innerHTML = [...FIELDS].sort((a,b)=>ORDER.indexOf(a[0])-ORDER.indexOf(b[0])).map(([k,l])=>`<label>${k==="color"?"Box color":l}<select data-f="${k}" id="map-${k}"><option value="">${k==="color"?"No color":"(none)"}</option>${k==="color"?`<option value="all" ${sheet.map.color==="all"?"selected":""}>One color for every row…</option><optgroup label="Use a column from the file">`:""}${sheet.headers.map((h,i)=>`<option value="${i}" ${String(sheet.map[k])===String(i)?"selected":""}>${esc(h||"Column "+(i+1))}</option>`).join("")}${k==="color"?"</optgroup>":""}</select></label>`).join("");
+  $("sheetColorAll").hidden = sheet.map.color!=="all";
+  if(sheet.map.color==="all") renderScSwatches();
   const {out,bad}=sheetRowsToEntries();
-  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${e.color?`<span class="ctag" style="--bx:${e.color};--bt:${textOn(e.color)}">${esc(e._label||colorLabel(e.color))}</span> `:""}${e._links.length?`[${e._links.length} photo${e._links.length>1?"s":""}] `:""}${esc(e.title)}</span></div>`),
+  $("sheetPreview").innerHTML = [...out.slice(0,40).map(e=>`<div><span class="d">${fmtRange(e)}</span><span class="t">${e.color?`<span class="ctag" style="--bx:${e.color};--bt:${textOn(e.color)}">${esc(e._label||(sheet.map.color==="all"&&$("scName").value.trim())||colorLabel(e.color))}</span> `:""}${e._links.length?`[${e._links.length} photo${e._links.length>1?"s":""}] `:""}${esc(e.title)}</span></div>`),
     ...bad.slice(0,10).map(e=>`<div class="bad"><span class="d">Row ${e._row}</span><span class="t">Can't read date “${esc(e._raw)}”</span></div>`)].join("") || `<div><span class="t">No rows found under the header.</span></div>`;
   const nLinks=out.reduce((n,e)=>n+e._links.length,0);
   $("sheetMsg").textContent = `${out.length} rows ready${nLinks?`, with ${nLinks} photo link${nLinks>1?"s":""} to download`:""}${bad.length?`. ${bad.length} skipped because the date couldn't be read`:""}.`;
+  // A color column should hold a few repeating labels; warn when nearly every row would get its own color
+  if(sheet.map.color!=="all" && sheet.map.color!=="" && sheet.map.color!=null && sheetLabels.size>10){
+    $("sheetMsg").insertAdjacentHTML("beforeend",` <span class="msg err" style="display:block;margin-top:8px">The column you picked for Box color has ${sheetLabels.size} different values, so almost every row gets its own color. Pick a column with a few repeating labels (like Work or Family), or choose “One color for every row”. <button class="btn sm" type="button" id="scFix">Use one color instead</button></span>`);
+  }
   $("sheetImport").textContent=`Add ${out.length} rows`; $("sheetImport").disabled=!out.length;
 }
 $("sheetMap").addEventListener("change",e=>{ sheet.map[e.target.dataset.f]=e.target.value; renderSheet(); });
+let sheetAll={color:"#FDE68A"};
+function renderScSwatches(){
+  $("scSwatches").innerHTML = BOX_COLORS.map(([c,n])=>`<button type="button" class="sw" data-c="${c}" style="--sc:${c}" aria-pressed="${c===sheetAll.color}" aria-label="${n}" title="${esc(colorLabel(c))}"></button>`).join("")
+    + `<input type="color" id="scCustom" value="${sheetAll.color}" aria-label="Pick any color">`;
+  const nm=(state.colorNames&&state.colorNames[sheetAll.color])||""; if(document.activeElement!==$("scName")) $("scName").value=nm;
+}
+$("scSwatches").addEventListener("click",e=>{ const b=e.target.closest(".sw"); if(b){ sheetAll.color=b.dataset.c; renderScSwatches(); renderSheet(); } });
+$("scSwatches").addEventListener("change",e=>{ if(e.target.id==="scCustom"){ sheetAll.color=normColor(e.target.value); renderScSwatches(); renderSheet(); } });
+$("scName").addEventListener("input",()=>renderSheet());
+$("sheetMsg").addEventListener("click",e=>{ if(e.target.id==="scFix"){ sheet.map.color="all"; renderSheet(); } });
 $("sheetImport").addEventListener("click",()=>{
   const {out}=sheetRowsToEntries();
   const jobs=[];
   dropSample();
   if(!state.colorNames) state.colorNames={};
-  for(const {color,label} of sheetLabels.values()) if(!state.colorNames[color]) state.colorNames[color]=label;
+  if(sheet.map.color==="all"){ const nm=$("scName").value.trim(); if(nm && sheetAll.color) state.colorNames[sheetAll.color]=nm; }
+  else for(const {color,label} of sheetLabels.values()) if(!state.colorNames[color]) state.colorNames[color]=label;
   const recs=out.map(({_raw,_row,_links,_label,...e})=>{ const id=uid(); if(_links.length) jobs.push({id,row:_row,links:_links,title:e.title}); return {...e,id}; });
   addEntries(recs);
   $("sheetResult").hidden=true;
@@ -1982,7 +2005,10 @@ wireDrop("sheetDrop","sheetFile",async f=>{
     if(typeof XLSX==="undefined") throw new Error("The spreadsheet reader didn't load. Check your connection and reload the page.");
     // Read every cell as the text you see in the file, so dates aren't shifted by time zones
     const isText=/\.(csv|tsv|txt)$/i.test(f.name);
-    const wb=XLSX.read(await f.arrayBuffer(),{type:"array",raw:isText,cellDates:false});
+    // Text files are decoded as UTF-8 first so emoji and accented letters come through intact
+    const wb=isText
+      ? XLSX.read(new TextDecoder("utf-8").decode(await f.arrayBuffer()).replace(/^\uFEFF/,""),{type:"string",raw:true,cellDates:false})
+      : XLSX.read(await f.arrayBuffer(),{type:"array",cellDates:false});
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
     if(rows.length<2) throw new Error("That file needs a header row and at least one event row.");
     sheet.headers=rows[0].map(h=>String(h).trim()); sheet.rows=rows.slice(1); sheet.map={};
