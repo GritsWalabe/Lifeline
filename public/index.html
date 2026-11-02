@@ -418,7 +418,7 @@ body.readonly #personName{pointer-events:none}
           </div>
           <p class="hint" id="fDur"></p>
         </div>
-        <p class="hint">Only the start year is required. Leave month or day blank when you aren't sure.</p>
+        <p class="hint">Starts on today's date. Change it for anything in the past. Only the year is required, so clear the month or day when you aren't sure.</p>
         <label>What happened<input type="text" id="fTitle" placeholder="Took Ethan to his first concert" required></label>
         <div class="row2">
           <label>Category<select id="fCat"></select></label>
@@ -1602,6 +1602,13 @@ $("fMulti").addEventListener("change",()=>{
 ["fYear","fMonth","fDay","fEYear","fEMonth","fEDay"].forEach(id=>$(id).addEventListener("input",updateDur));
 CATS.forEach(([k,l])=>$("fCat").insertAdjacentHTML("beforeend",`<option value="${k}">${l}</option>`));
 $("fCat").value="milestone";
+// New events start on today's date; change it for anything in the past
+function setToday(){
+  const d=new Date();
+  $("fYear").value=d.getFullYear(); $("fMonth").value=d.getMonth()+1; $("fDay").value=d.getDate();
+  if(typeof updateDur==="function") updateDur();
+}
+setToday();
 function formMsg(t,err){ const el=$("formMsg"); el.hidden=!t; el.className=err?"msg err":"msg"; el.textContent=t||""; }
 $("pane-add").addEventListener("submit",async ev=>{
   ev.preventDefault();
@@ -1625,7 +1632,7 @@ $("pane-add").addEventListener("submit",async ev=>{
     if(state.sample){ dropSample(); state.entries.push({...e,...rec,id:uid()}); } else if(e) Object.assign(e,rec);
     delPhotos(removedPhotos); save(); render(); endEdit(); toast("Saved"); closeDrawer();
   } else { addEntries([rec]); toast(`Added “${title}”`); }
-  ["fDay","fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
+  ["fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; setToday(); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
   $("fTitle").focus();
 });
 $("fPhotos").addEventListener("change",ev=>{ [...ev.target.files].forEach(f=>formPhotos.push({file:f,url:URL.createObjectURL(f)})); ev.target.value=""; renderStrip(); });
@@ -1651,7 +1658,7 @@ function startEdit(id){
 }
 function endEdit(){
   editingId=null; $("formTitle").textContent="Add an event"; $("fSubmit").textContent="Add to timeline"; $("fCancel").hidden=true;
-  ["fYear","fDay","fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fMonth").value=""; $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true;
+  ["fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; setToday();
   formPhotos.forEach(p=>p.url&&URL.revokeObjectURL(p.url)); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
 }
 $("fCancel").addEventListener("click",endEdit);
