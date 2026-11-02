@@ -68,7 +68,7 @@ header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:spac
 .banner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;border:1px dashed var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:14px}
 
 input[type=text],input[type=number],input[type=email],input[type=password],select,textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px 10px;font-size:15px;color:var(--ink)}
-.toolbar input[type=text]{flex:1 1 180px;min-width:0;width:auto;background:var(--surface)}
+.toolbar input[type=text],.toolbar input[type=search]{flex:1 1 180px;min-width:0;width:auto;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:15px;color:var(--ink)}
 textarea{min-height:80px;resize:vertical}
 .btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 14px;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:var(--muted)}
@@ -343,7 +343,7 @@ body.readonly #personName{pointer-events:none}
       <button id="vTrack" aria-pressed="true">Timeline</button>
       <button id="vList" aria-pressed="false">List</button>
     </div>
-    <input type="text" id="search" placeholder="Search events" aria-label="Search events">
+    <input type="search" id="search" name="lifeline-search" placeholder="Search events" aria-label="Search events" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other">
     <button class="btn" id="slideshow">Photo slideshow</button>
     <button class="btn" id="shareBtn">Share</button>
   </div>
@@ -565,7 +565,8 @@ body.readonly #personName{pointer-events:none}
           <div class="btns"><button class="btn" id="signOut">Sign out</button></div>
           <details>
             <summary style="cursor:pointer;font-weight:600;font-size:14px">Change password</summary>
-            <form class="stack" id="pwForm" style="margin-top:10px" autocomplete="off">
+            <form class="stack" id="pwForm" style="margin-top:10px">
+              <input type="email" class="acct-user" autocomplete="username" tabindex="-1" aria-hidden="true" hidden>
               <label>Current password<input type="password" id="pwCur" autocomplete="current-password"></label>
               <label>New password<input type="password" id="pwNew" minlength="8" autocomplete="new-password"></label>
               <div id="pwMsg" hidden></div>
@@ -586,6 +587,7 @@ body.readonly #personName{pointer-events:none}
         <div class="card">
           <h3>Delete your account</h3>
           <p>Permanently deletes your account and all of your timelines and photos from Lifeline. Share links stop working. This can't be undone.</p>
+          <input type="email" class="acct-user" autocomplete="username" tabindex="-1" aria-hidden="true" hidden>
           <label>Password<input type="password" id="delPw" autocomplete="current-password"></label>
           <div id="delMsg" hidden></div>
           <div class="btns"><button class="btn danger" id="delAcct">Delete my account</button></div>
@@ -884,6 +886,9 @@ async function initServer(){
 async function signedIn(user){
   me=user; cloud.uid=user.id; mode="server"; loadPending();
   $("acctEmail").textContent=`Signed in as ${user.email}.`;
+  document.querySelectorAll(".acct-user").forEach(i=>i.value=user.email);
+  // If a browser already autofilled the search box with the email, clear it
+  if($("search").value.trim().toLowerCase()===String(user.email).toLowerCase()) $("search").value="";
   $("tlWrap").hidden=false; $("brandPlain").hidden=true;
   refreshStatus();
   try{
@@ -1195,9 +1200,17 @@ function render(){
   $("trackView").hidden = view!=="track"; $("zoombar").hidden = view!=="track"; $("listView").hidden = view!=="list";
   if(view==="track") layoutTrack(); else renderList();
 }
+function emptyHTML(){
+  const q=$("search").value.trim();
+  if(q && state.entries.length) return `<h3>No events match “${esc(q)}”</h3><button class="btn" onclick="clearSearch()">Clear search</button>`;
+  if(state.entries.length) return `<h3>No events to show</h3>All categories are turned off. <button class="btn sm" onclick="filters=new Set(CATS.map(c=>c[0]));render()">Show all categories</button>`;
+  return `<h3>No events yet</h3>Add your first event with Add &amp; import.`;
+}
+function showEmptyReason(){ $("trackEmpty").innerHTML=emptyHTML(); }
+function clearSearch(){ $("search").value=""; render(); }
 function renderList(){
   const tl=$("timeline");
-  if(!visible.length){ tl.innerHTML=`<div class="track-empty"><h3>No events to show</h3>Add your first event with Add &amp; import, or turn categories back on.</div>`; return; }
+  if(!visible.length){ tl.innerHTML=`<div class="track-empty">${emptyHTML()}</div>`; return; }
   const birth=birthYear(); let html=`<div class="spine">`, cur=null;
   for(const e of visible){
     const y=e.date.slice(0,4);
@@ -1226,7 +1239,7 @@ function layoutTrack(keepTime){
   if(keepTime===undefined) keepTime=centerTime();
   scaled=new Set();
   const eras=sortedEras();
-  if(!visible.length && !eras.length){ tr.innerHTML=""; tr.style.width="100%"; tr.style.height="0px"; $("trackEmpty").hidden=false; if(mode==="shared") $("trackEmpty").innerHTML="<h3>Nothing to show</h3>This timeline doesn't have any events yet."; trackItems=[]; geo=null; $("overview").innerHTML=""; $("zHint").textContent=""; return; }
+  if(!visible.length && !eras.length){ tr.innerHTML=""; tr.style.width="100%"; tr.style.height="0px"; $("trackEmpty").hidden=false; showEmptyReason(); if(mode==="shared") $("trackEmpty").innerHTML="<h3>Nothing to show</h3>This timeline doesn't have any events yet."; trackItems=[]; geo=null; $("overview").innerHTML=""; $("zHint").textContent=""; return; }
   $("trackEmpty").hidden=true;
   const narrow=innerWidth<640;
   // Era name rows sit across the top; overlapping eras stack into extra rows
