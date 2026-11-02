@@ -89,6 +89,18 @@ textarea.grow.capped{overflow-y:auto}
 /* The track */
 .track-wrap{position:relative;overflow-x:auto;overflow-y:hidden;border-block:1px solid var(--line);cursor:grab;scrollbar-width:thin;overscroll-behavior-x:contain}
 .track-wrap.dragging{cursor:grabbing;user-select:none}
+.track-wrap.selecting{cursor:crosshair;user-select:none}
+.tc.sel,.ev.sel{outline:3px solid var(--accent);outline-offset:2px}
+.tc.sel::after,.ev.sel::after{content:"✓";position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font:700 12px/20px var(--f-body);text-align:center}
+.dot.sel::after{inset:2px;box-shadow:0 0 0 3px var(--accent)}
+.selband{position:absolute;top:0;bottom:0;background:var(--accent);opacity:.12;border-inline:2px solid var(--accent);z-index:20;pointer-events:none}
+.selbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:25;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 12px;margin-bottom:10px;border:2px solid var(--accent);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(10,16,24,.12)}
+.selbar b{font-family:var(--f-display);font-size:16px;min-width:96px}
+.selbar .grp{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.selbar .grp input[type=date]{width:auto;padding:5px 8px;font-size:14px}
+.selbar .sp{flex:1 1 0}
+.selbar select{width:auto;font-size:14px;padding:6px 8px}
+#selBtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .track{position:relative}
 .stripe{position:absolute;top:0;bottom:0;background:var(--stripe)}
 .axis{position:absolute;left:0;right:0;height:2px;background:var(--ink);opacity:.8}
@@ -298,7 +310,7 @@ img{max-width:100%}
 #auth{padding:16px;overflow:auto}
 .share-url{display:flex;gap:6px}
 .share-url input{flex:1;min-width:0;font-family:var(--f-mono);font-size:13px}
-body.readonly #tlWrap, body.readonly #dMove, body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
+body.readonly #selBtn, body.readonly #selBar, body.readonly #tlWrap, body.readonly #dMove, body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
 body.readonly #personName{pointer-events:none}
 .tl-wrap{position:relative;align-self:flex-start}
 .tl-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px 3px 12px;cursor:pointer;font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
@@ -363,6 +375,7 @@ body.readonly #personName{pointer-events:none}
     </div>
     <input type="search" id="search" name="lifeline-search" placeholder="Search events" aria-label="Search events" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other">
     <button class="btn" id="slideshow">Photo slideshow</button>
+    <button class="btn" id="selBtn" aria-pressed="false" title="Pick several events to delete or move">Select</button>
     <button class="btn" id="shareBtn">Share</button>
   </div>
   <div class="chips" id="chips"></div>
@@ -373,6 +386,23 @@ body.readonly #personName{pointer-events:none}
     <button class="btn sm" id="zIn" aria-label="Zoom in">+</button>
     <button class="btn sm" id="zFit">Show all</button>
     <span class="hint" id="zHint">Drag or scroll sideways. Events grow as you pass over them.</span>
+  </div>
+  <div class="selbar" id="selBar" hidden role="region" aria-label="Select events">
+    <b id="selCount">0 selected</b>
+    <span class="hint" id="selHint">Click events, or drag across the timeline to select a stretch of time.</span>
+    <span class="grp">
+      <label class="check" style="gap:4px">From <input type="date" id="selFrom"></label>
+      <label class="check" style="gap:4px">To <input type="date" id="selTo"></label>
+      <button class="btn sm" id="selRange">Select these dates</button>
+    </span>
+    <span class="grp">
+      <button class="btn sm" id="selAll">Select all shown</button>
+      <button class="btn sm" id="selNone">Clear</button>
+    </span>
+    <span class="sp"></span>
+    <select id="selMove" aria-label="Move selected events to another timeline" hidden></select>
+    <button class="btn danger" id="selDel" disabled>Delete</button>
+    <button class="btn primary" id="selDone">Done</button>
   </div>
 </div>
 
@@ -983,6 +1013,8 @@ function renderSwitcher(){
   const others=tlList.filter(t=>t.id!==tlId);
   $("dMove").innerHTML=`<option value="">Move to another timeline…</option>`+others.map(t=>`<option value="${t.id}">${esc(tlName(t))}</option>`).join("");
   $("dMove").hidden=!others.length||state.sample||!tlId;
+  $("selMove").innerHTML=`<option value="">Move to another timeline…</option>`+others.map(t=>`<option value="${t.id}">${esc(tlName(t))}</option>`).join("");
+  $("selMove").hidden=!others.length||state.sample||!tlId;
 }
 function toggleMenu(open){
   const m=$("tlMenu"); open = open===undefined ? m.hidden : open;
@@ -1261,6 +1293,7 @@ function render(){
   $("vTrack").setAttribute("aria-pressed", view==="track"); $("vList").setAttribute("aria-pressed", view==="list");
   $("trackView").hidden = view!=="track"; $("zoombar").hidden = view!=="track"; $("listView").hidden = view!=="list";
   if(view==="track") layoutTrack(); else renderList();
+  if(selMode) refreshSel();
 }
 function emptyHTML(){
   const q=$("search").value.trim();
@@ -1281,13 +1314,13 @@ function renderList(){
       html+=`<div class="year"><h3>${y}</h3><span class="age">${birth&&yr>birth?`age ${yr-birth}`:""}</span>${inEras.length?`<span class="eras">${inEras.map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</span>`:""}</div>`; }
     const src=e.src==="facebook"?`<span class="src">From Facebook</span>`:e.src==="sheet"?`<span class="src">From spreadsheet</span>`:"";
     const ph=(e.photos||[]).slice(0,6).map(p=>`<span class="sq"><img alt="" data-src="${p}"></span>`).join("");
-    html+=`<button class="ev${e.color?" colored":""}" data-id="${e.id}" style="--cc:var(--c-${e.cat});${boxStyle(e)}">
+    html+=`<button class="ev${e.color?" colored":""}${selected.has(e.id)?" sel":""}" data-id="${e.id}" style="--cc:var(--c-${e.cat});${boxStyle(e)}">
       <span class="meta"><span class="date">${fmtRange(e)}</span>${e.end?`<span>${duration(e)}</span>`:""}<span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src}</span>
       <h4>${esc(e.title)}</h4>${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}${ph?`<span class="strip">${ph}</span>`:""}</button>`;
   }
   tl.innerHTML=html+`</div>`; hydrate(tl);
 }
-$("timeline").addEventListener("click",ev=>{ const b=ev.target.closest(".ev"); if(b) openDetail(b.dataset.id); });
+$("timeline").addEventListener("click",ev=>{ const b=ev.target.closest(".ev"); if(!b) return; if(selMode) toggleSel(b.dataset.id); else openDetail(b.dataset.id); });
 
 /* ---------- Horizontal track ---------- */
 let ppy=prefs.ppy||null, geo=null, trackItems=[], scaled=new Set(), zoomMin=4, zoomMax=2400;
@@ -1374,10 +1407,10 @@ function layoutTrack(keepTime){
       h+=`<i class="pin" style="${cc};left:${x}px;top:${axisY}px"></i>`;
       const ph=e.photos&&e.photos[0];
       const pos = side==="up" ? `bottom:${H-edge}px` : `top:${edge}px`;
-      h+=`<button class="tc ${side}${ph?" hasimg":""}${e.color?" colored":""}" data-id="${e.id}" data-x="${x}" style="${cc};${boxStyle(e)}left:${x-CW/2}px;${pos};width:${CW}px;max-height:${CH}px" aria-label="${esc(fmtRange(e)+": "+e.title)}">${ph?`<img alt="" data-src="${ph}">`:""}<span class="tb"><span class="tm"><i></i>${fmtRange(e)}${!e.end&&e.photos&&e.photos.length>1?` · ${e.photos.length} photos`:""}</span><span class="tt">${esc(e.title)}</span></span></button>`;
+      h+=`<button class="tc ${side}${ph?" hasimg":""}${e.color?" colored":""}${selected.has(e.id)?" sel":""}" data-id="${e.id}" data-x="${x}" style="${cc};${boxStyle(e)}left:${x-CW/2}px;${pos};width:${CW}px;max-height:${CH}px" aria-label="${esc(fmtRange(e)+": "+e.title)}">${ph?`<img alt="" data-src="${ph}">`:""}<span class="tb"><span class="tm"><i></i>${fmtRange(e)}${!e.end&&e.photos&&e.photos.length>1?` · ${e.photos.length} photos`:""}</span><span class="tt">${esc(e.title)}</span></span></button>`;
     } else {
       dots++;
-      h+=`<button class="dot" data-id="${e.id}" data-x="${x}" style="${cc};left:${x}px;top:${axisY}px" title="${esc(fmtRange(e)+" · "+e.title)}" aria-label="${esc(fmtRange(e)+": "+e.title)}"></button>`;
+      h+=`<button class="dot${selected.has(e.id)?" sel":""}" data-id="${e.id}" data-x="${x}" style="${cc};left:${x}px;top:${axisY}px" title="${esc(fmtRange(e)+" · "+e.title)}" aria-label="${esc(fmtRange(e)+": "+e.title)}"></button>`;
     }
   }
   tr.innerHTML=h;
@@ -1435,13 +1468,32 @@ function restoreMagnify(){
   });
 }
 let drag=null, justDragged=false;
-wrapEl.addEventListener("pointerdown",e=>{ if(e.pointerType!=="mouse"||e.button!==0) return; drag={x:e.clientX,s:wrapEl.scrollLeft,moved:false}; });
+wrapEl.addEventListener("pointerdown",e=>{ if(e.pointerType!=="mouse"||e.button!==0) return; drag={x:e.clientX,s:wrapEl.scrollLeft,moved:false,sel:selMode,add:e.shiftKey||e.ctrlKey||e.metaKey}; });
 window.addEventListener("pointermove",e=>{
   if(!drag) return; const dx=e.clientX-drag.x;
+  if(drag.sel){ // sweep across time to select
+    if(Math.abs(dx)>5) drag.moved=true;
+    if(!drag.moved || !geo) return;
+    const r=wrapEl.getBoundingClientRect(), x0=drag.x-r.left+drag.s, x1=e.clientX-r.left+wrapEl.scrollLeft;
+    let band=$("selBand"); if(!band){ band=document.createElement("div"); band.id="selBand"; band.className="selband"; $("track").appendChild(band); }
+    band.style.left=Math.min(x0,x1)+"px"; band.style.width=Math.abs(x1-x0)+"px";
+    drag.range=[Math.min(x0,x1),Math.max(x0,x1)];
+    // scroll when sweeping past the edge
+    if(e.clientX>r.right-40) wrapEl.scrollLeft+=20; else if(e.clientX<r.left+40) wrapEl.scrollLeft-=20;
+    return;
+  }
   if(Math.abs(dx)>4){ drag.moved=true; wrapEl.classList.add("dragging"); }
   if(drag.moved) wrapEl.scrollLeft=drag.s-dx;
 });
-window.addEventListener("pointerup",()=>{ if(drag&&drag.moved){ justDragged=true; setTimeout(()=>justDragged=false,0); } drag=null; wrapEl.classList.remove("dragging"); });
+window.addEventListener("pointerup",()=>{
+  if(drag&&drag.sel&&drag.moved&&drag.range){
+    const [a,b]=drag.range; const ids=trackItems.filter(it=>it.x>=a&&it.x<=b).map(it=>it.el.dataset.id);
+    if(!drag.add) selected.clear();
+    ids.forEach(id=>selected.add(id)); refreshSel();
+    toast(ids.length?`Selected ${ids.length} event${ids.length===1?"":"s"} in that stretch`:"No events in that stretch");
+  }
+  const band=$("selBand"); if(band) band.remove();
+  if(drag&&drag.moved){ justDragged=true; setTimeout(()=>justDragged=false,0); } drag=null; wrapEl.classList.remove("dragging"); });
 wrapEl.addEventListener("pointermove",e=>{ if(e.pointerType!=="mouse") return; overTrack=true; lastClientX=e.clientX; restoreMagnify(); });
 wrapEl.addEventListener("pointerleave",e=>{ if(e.pointerType!=="mouse") return; overTrack=false; restoreMagnify(); });
 wrapEl.addEventListener("scroll",()=>{ restoreMagnify(); updateOvWin(); pinEraLabels(); },{passive:true});
@@ -1458,7 +1510,68 @@ wrapEl.addEventListener("focusin",e=>{ const t=e.target.closest(".tc,.dot"); if(
 wrapEl.addEventListener("click",e=>{
   if(justDragged){ e.preventDefault(); return; }
   const er=e.target.closest(".era-lab"); if(er){ focusEra(er.dataset.era); return; }
-  const t=e.target.closest(".tc,.dot"); if(t) openDetail(t.dataset.id);
+  const t=e.target.closest(".tc,.dot"); if(!t) return;
+  if(selMode) toggleSel(t.dataset.id); else openDetail(t.dataset.id);
+});
+/* ---------- Select several events ---------- */
+let selMode=false; const selected=new Set();
+function setSelMode(on){
+  selMode=on; if(!on) selected.clear();
+  $("selBar").hidden=!on; $("selBtn").setAttribute("aria-pressed",on);
+  wrapEl.classList.toggle("selecting",on);
+  $("selHint").textContent = matchMedia("(hover: none)").matches ? "Tap events to select them, or use dates." : "Click events, or drag across the timeline to select a stretch of time. Hold Shift to add to the selection.";
+  if(on) closeDetail();
+  refreshSel(); renderSwitcher();
+}
+function toggleSel(id){ selected.has(id)?selected.delete(id):selected.add(id); refreshSel(); }
+function refreshSel(){
+  // drop anything no longer on this timeline
+  const ids=new Set(state.entries.map(e=>e.id)); [...selected].forEach(id=>{ if(!ids.has(id)) selected.delete(id); });
+  document.querySelectorAll("#track [data-id], #timeline [data-id]").forEach(el=>el.classList.toggle("sel",selected.has(el.dataset.id)));
+  const n=selected.size, hidden=[...selected].filter(id=>!visible.some(v=>v.id===id)).length;
+  $("selCount").textContent=`${n} selected`;
+  $("selDel").disabled=!n; armReset($("selDel"),`Delete${n?" "+n:""}`);
+  $("selMove").disabled=!n;
+  if(hidden) $("selCount").textContent+=` (${hidden} hidden by filters)`;
+}
+$("selBtn").addEventListener("click",()=>{ if(mode==="shared") return; setSelMode(!selMode); });
+$("selDone").addEventListener("click",()=>setSelMode(false));
+$("selNone").addEventListener("click",()=>{ selected.clear(); refreshSel(); });
+$("selAll").addEventListener("click",()=>{ visible.forEach(e=>selected.add(e.id)); refreshSel(); toast(`Selected all ${visible.length} events shown`); });
+$("selRange").addEventListener("click",()=>{
+  const f=$("selFrom").value, t=$("selTo").value;
+  if(!f && !t){ toast("Enter a From date, a To date, or both."); return; }
+  const lo = f ? tStart(f) : -Infinity, hi = t ? tEnd(t) : Infinity;
+  if(lo>=hi){ toast("The From date has to be before the To date."); return; }
+  const hits=visible.filter(e=>{ const a=tStart(e.date); return a>=lo && a<hi; });
+  hits.forEach(e=>selected.add(e.id)); refreshSel();
+  const what = f&&t ? `from ${fmtDate(f)} to ${fmtDate(t)}` : f ? `on or after ${fmtDate(f)}` : `on or before ${fmtDate(t)}`;
+  toast(hits.length ? `Selected ${hits.length} event${hits.length===1?"":"s"} ${what}` : `No events shown ${what}`);
+});
+$("selDel").addEventListener("click",ev=>{
+  const n=selected.size; if(!n) return;
+  arm(ev.currentTarget,`Delete ${n}`,`Click again to delete ${n} event${n===1?"":"s"}`,()=>{
+    const gone=state.entries.filter(e=>selected.has(e.id));
+    if(!state.sample) delPhotos(gone.flatMap(e=>e.photos||[]));
+    state.entries=state.entries.filter(e=>!selected.has(e.id));
+    selected.clear();
+    if(!state.sample) save();
+    render(); refreshSel(); syncListEntry();
+    toast(`Deleted ${gone.length} event${gone.length===1?"":"s"}`);
+  });
+});
+$("selMove").addEventListener("change",async e=>{
+  const to=e.target.value; e.target.value=""; if(!to||!selected.size) return;
+  const ids=[...selected], dest=tlName(tlList.find(t=>t.id===to));
+  try{
+    await flushCloud();
+    const r=await api(`/api/timelines/${tlId}/move`,{method:"POST",json:{to,ids}});
+    version=r.version; state=docIn(r.doc); lastSent=JSON.stringify(docOut()); saveLocal();
+    try{ localStorage.removeItem(tlKey(to)); }catch(err){}
+    const t=tlList.find(x=>x.id===to); if(t) t.count+=r.moved;
+    selected.clear(); render(); renderEraList(); syncListEntry(); refreshSel();
+    toast(`Moved ${r.moved} event${r.moved===1?"":"s"} to “${dest}”`);
+  }catch(err){ toast(err.message); }
 });
 function zoomTo(newPpy, anchorClientX){
   if(!geo) return;
@@ -1857,7 +1970,9 @@ document.addEventListener("keydown",ev=>{
   if(!$("detail").hidden){
     if(ev.key==="Escape") closeDetail(); else if(ev.key==="ArrowRight") stepDetail(1); else if(ev.key==="ArrowLeft") stepDetail(-1); return;
   }
-  if(!$("drawer").hidden && ev.key==="Escape") closeDrawer();
+  if(!$("drawer").hidden && ev.key==="Escape") return closeDrawer();
+  if(selMode && ev.key==="Escape") setSelMode(false);
+  if(selMode && (ev.key==="Delete"||ev.key==="Backspace") && selected.size && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||"")){ ev.preventDefault(); $("selDel").click(); }
 });
 
 /* ---------- File drop helpers ---------- */
