@@ -206,6 +206,11 @@ body.locked{overflow:hidden}
 .pane h3{font-family:var(--f-display);font-size:18px;font-weight:700;margin:0}
 .pane p{margin:0;color:var(--muted);font-size:14px}
 label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.flabel{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:-8px}
+.photo-in{border:2px dashed var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.photo-in.over{border-color:var(--accent);background:var(--accent-soft)}
+.photo-in label.btn{text-transform:none;letter-spacing:0;color:var(--ink);display:inline-flex}
+kbd{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--surface)}
 .sublabel{font-family:var(--f-display);font-weight:700;font-size:14px;margin-bottom:-6px}
 /* Duration bar for events that span days */
 .span-bar{position:absolute;height:8px;border-radius:4px;background:var(--cc);opacity:.85;transform:translateY(-50%);z-index:3;pointer-events:none;box-shadow:0 0 0 2px var(--bg)}
@@ -425,7 +430,15 @@ body.readonly #personName{pointer-events:none}
           <label>Place<input type="text" id="fPlace" placeholder="Dallas, TX"></label>
         </div>
         <label>Details<textarea id="fDesc" placeholder="Anything worth remembering about it"></textarea></label>
-        <label>Photos<input type="file" class="plain" id="fPhotos" accept="image/*" multiple></label>
+        <span class="flabel">Photos</span>
+        <div class="photo-in" id="fPhotoZone">
+          <div class="btns">
+            <label class="btn sm" for="fPhotos">Choose photos</label>
+            <button type="button" class="btn sm" id="fPaste">Paste photo</button>
+            <input type="file" id="fPhotos" accept="image/*" multiple hidden>
+          </div>
+          <span class="hint" id="fPhotoHint">Or press <kbd>Ctrl</kbd>+<kbd>V</kbd> (<kbd>⌘</kbd>+<kbd>V</kbd> on a Mac) anywhere in this form, or drag photos here.</span>
+        </div>
         <div class="strip" id="fStrip"></div>
         <div id="formMsg" hidden></div>
         <div class="btns">
@@ -1635,7 +1648,41 @@ $("pane-add").addEventListener("submit",async ev=>{
   ["fTitle","fPlace","fDesc","fEYear","fEDay"].forEach(i=>$(i).value=""); $("fEMonth").value=""; $("fMulti").checked=false; $("fEndWrap").hidden=true; setToday(); formPhotos=[]; removedPhotos=[]; renderStrip(); formMsg("");
   $("fTitle").focus();
 });
-$("fPhotos").addEventListener("change",ev=>{ [...ev.target.files].forEach(f=>formPhotos.push({file:f,url:URL.createObjectURL(f)})); ev.target.value=""; renderStrip(); });
+function addFormPhotos(files,how){
+  const imgs=[...files].filter(f=>f && /^image\//.test(f.type));
+  imgs.forEach(f=>formPhotos.push({file:f,url:URL.createObjectURL(f)}));
+  if(imgs.length){ renderStrip(); if(how) toast(`${how} ${imgs.length} photo${imgs.length>1?"s":""}`); }
+  return imgs.length;
+}
+$("fPhotos").addEventListener("change",ev=>{ addFormPhotos(ev.target.files); ev.target.value=""; });
+// Paste: Ctrl/Cmd+V anywhere while the Add event form is open
+const isMac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
+if(isMac) $("fPhotoHint").innerHTML='Or press <kbd>⌘</kbd>+<kbd>V</kbd> anywhere in this form, or drag photos here.';
+document.addEventListener("paste",e=>{
+  if($("drawer").hidden || $("pane-add").hidden) return;
+  const cd=e.clipboardData; if(!cd) return;
+  const files=[...(cd.files||[])];
+  if(!files.length) for(const it of cd.items||[]) if(it.kind==="file"){ const f=it.getAsFile(); if(f) files.push(f); }
+  if(addFormPhotos(files,"Pasted")){ e.preventDefault(); return; }
+  // Copied from a web page: the clipboard may hold only a link to the picture
+  if(!/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName||"") && /<img/i.test(cd.getData("text/html")||""))
+    toast("That copied a link to the picture, not the picture itself. Right-click the image, choose Copy Image, then paste again.");
+});
+// Paste button: reads the clipboard directly where the browser allows it
+$("fPaste").addEventListener("click",async()=>{
+  if(!navigator.clipboard || !navigator.clipboard.read){ toast(`Press ${isMac?"⌘":"Ctrl"}+V to paste your photo.`); return; }
+  try{
+    const items=await navigator.clipboard.read(), files=[];
+    for(const it of items){ const t=it.types.find(x=>x.startsWith("image/")); if(t){ const b=await it.getType(t); files.push(new File([b],`pasted.${t.split("/")[1]||"png"}`,{type:t})); } }
+    if(!addFormPhotos(files,"Pasted")) toast("There's no picture on your clipboard. Copy a photo first, then click Paste photo.");
+  }catch(err){ toast(`Your browser didn't allow reading the clipboard. Press ${isMac?"⌘":"Ctrl"}+V instead.`); }
+});
+// Drag and drop photos onto the photo area
+(()=>{ const z=$("fPhotoZone");
+  ["dragenter","dragover"].forEach(t=>z.addEventListener(t,e=>{ e.preventDefault(); z.classList.add("over"); }));
+  ["dragleave","drop"].forEach(t=>z.addEventListener(t,e=>{ e.preventDefault(); z.classList.remove("over"); }));
+  z.addEventListener("drop",e=>addFormPhotos(e.dataTransfer.files,"Added"));
+})();
 function renderStrip(){
   const s=$("fStrip");
   s.innerHTML=formPhotos.map((p,i)=>`<figure><img alt="" ${p.url?`src="${p.url}"`:`data-src="${p.id}"`}><button type="button" class="x" data-i="${i}" aria-label="Remove photo">×</button></figure>`).join("");
