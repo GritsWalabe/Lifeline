@@ -70,6 +70,10 @@ header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:spac
 input[type=text],input[type=number],input[type=email],input[type=password],select,textarea{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px 10px;font-size:15px;color:var(--ink)}
 .toolbar input[type=text],.toolbar input[type=search]{flex:1 1 180px;min-width:0;width:auto;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:15px;color:var(--ink)}
 textarea{min-height:80px;resize:vertical}
+/* Event text boxes grow to show everything typed, so long posts can be read and edited in full */
+textarea.grow{min-height:0;resize:none;overflow:hidden;line-height:1.5;font-family:var(--f-body);text-transform:none;letter-spacing:0;font-weight:400}
+textarea.grow.capped{overflow-y:auto}
+#fTitle{font-size:16px}
 .btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 14px;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:var(--muted)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
@@ -424,12 +428,12 @@ body.readonly #personName{pointer-events:none}
           <p class="hint" id="fDur"></p>
         </div>
         <p class="hint">Starts on today's date. Change it for anything in the past. Only the year is required, so clear the month or day when you aren't sure.</p>
-        <label>What happened<input type="text" id="fTitle" placeholder="Took Ethan to his first concert" required></label>
+        <label>What happened<textarea id="fTitle" class="grow" rows="1" placeholder="Took Ethan to his first concert" required></textarea></label>
         <div class="row2">
           <label>Category<select id="fCat"></select></label>
           <label>Place<input type="text" id="fPlace" placeholder="Dallas, TX"></label>
         </div>
-        <label>Details<textarea id="fDesc" placeholder="Anything worth remembering about it"></textarea></label>
+        <label>Details<textarea id="fDesc" class="grow" rows="3" placeholder="Anything worth remembering about it"></textarea></label>
         <span class="flabel">Photos</span>
         <div class="photo-in" id="fPhotoZone">
           <div class="btns">
@@ -1472,7 +1476,7 @@ function drawDetail(){
   const src=e.src==="facebook"?"From Facebook":e.src==="sheet"?"From spreadsheet":"";
   $("dBody").style.setProperty("--cc",`var(--c-${e.cat})`);
   $("dBody").innerHTML=`<div class="yr">${y}</div><div class="when">${fmtRange(e)}${e.end?` · ${duration(e)}`:""}${birth&&y>birth?` · age ${y-birth}`:""}</div>
-    <h2 id="dTitle">${esc(e.title)}</h2>
+    <h2 id="dTitle" style="white-space:pre-line">${esc(e.title)}</h2>
     ${erasAt(tval(e.date)).length?`<div class="tags">${erasAt(tval(e.date)).map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</div>`:""}
     <div class="tags"><span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src?`<span class="src">${src}</span>`:""}${e.videos?`<span>${e.videos} video${e.videos>1?"s":""} not imported</span>`:""}</div>
     ${e.desc&&e.desc!==e.title?`<p>${esc(e.desc)}</p>`:""}`;
@@ -1512,11 +1516,24 @@ $("openDrawer").addEventListener("click",()=>openDrawer("add"));
 $("drClose").addEventListener("click",closeDrawer);
 $("drawer").addEventListener("click",e=>{ if(e.target===$("drawer")) closeDrawer(); });
 document.querySelectorAll(".tabs button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.pane)));
+// Size a text box to fit its contents (up to most of the screen, then it scrolls)
+function grow(el){
+  if(!el || !el.offsetParent) return;
+  const max=Math.round(innerHeight*0.6);
+  el.style.height="auto";
+  const h=el.scrollHeight+2;
+  el.style.height=Math.min(h,max)+"px";
+  el.classList.toggle("capped",h>max);
+}
+function growAll(){ document.querySelectorAll("textarea.grow").forEach(grow); }
+document.addEventListener("input",e=>{ if(e.target.matches&&e.target.matches("textarea.grow")) grow(e.target); });
+addEventListener("resize",()=>{ if(!$("drawer").hidden) growAll(); });
 function showTab(p){
   document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected", b.dataset.pane===p));
   ["add","eras","sheet","fb","data"].forEach(k=>$("pane-"+k).hidden = k!==p);
   if(p==="eras") renderEraList();
   if(p==="fb"){ showResume(); updateFixCard(); }
+  if(p==="add") requestAnimationFrame(growAll);
 }
 
 /* ---------- Eras ---------- */
@@ -1620,6 +1637,7 @@ function setToday(){
   const d=new Date();
   $("fYear").value=d.getFullYear(); $("fMonth").value=d.getMonth()+1; $("fDay").value=d.getDate();
   if(typeof updateDur==="function") updateDur();
+  if(typeof growAll==="function") requestAnimationFrame(growAll);
 }
 setToday();
 function formMsg(t,err){ const el=$("formMsg"); el.hidden=!t; el.className=err?"msg err":"msg"; el.textContent=t||""; }
@@ -1702,6 +1720,7 @@ function startEdit(id){
   $("fTitle").value=e.title; $("fCat").value=e.cat; $("fPlace").value=e.place||""; $("fDesc").value=e.desc||"";
   formPhotos=(e.photos||[]).map(id=>({id})); removedPhotos=[]; renderStrip();
   $("formTitle").textContent="Edit event"; $("fSubmit").textContent="Save changes"; $("fCancel").hidden=false; $("fTitle").focus();
+  requestAnimationFrame(growAll);
 }
 function endEdit(){
   editingId=null; $("formTitle").textContent="Add an event"; $("fSubmit").textContent="Add to timeline"; $("fCancel").hidden=true;
