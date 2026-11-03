@@ -326,6 +326,22 @@ body.readonly #personName{pointer-events:none}
 .tl-item .ct{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
 .tl-item.new{color:var(--accent);font-weight:600;border-top:1px solid var(--line);border-radius:0 0 6px 6px;margin-top:4px}
 #dMove{width:auto;font-size:14px;padding:6px 10px;margin-right:auto}
+.links,.visits{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px}
+.links:empty,.visits:empty{display:none}
+.lk{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}
+.lk:last-child,.vs:last-child{border-bottom:0}
+.lk b{font-family:var(--f-display);font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.lk .meta{grid-column:1/-1;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px}
+.lk .url{grid-column:1/-1;display:flex;gap:6px}
+.lk .url input{flex:1;min-width:0;font-family:var(--f-mono);font-size:12px;padding:6px 8px}
+.lk.off b,.lk.off .url{opacity:.5}
+.lk .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.pill{font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;background:var(--accent-soft);color:var(--ink)}
+.pill.off{background:var(--line)}
+.vs{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:14px}
+.vs b{font-weight:600}
+.vs .d{font-family:var(--f-mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+.vs .sub{grid-column:1/-1;font-size:12px;color:var(--muted)}
 .foot{padding-block:24px 40px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
 .foot a{color:var(--muted)}
 .hint a,.auth-card a{color:var(--accent)}
@@ -353,7 +369,7 @@ body.readonly #personName{pointer-events:none}
   </header>
 
   <div class="banner" id="sharedBanner" hidden>
-    <span id="sharedText">You're looking at a shared timeline. It's view only.</span>
+    <span><span id="sharedText">You're looking at a shared timeline. It's view only.</span> <span class="hint">The owner can see when this link is opened.</span></span>
     <a class="btn" href="/">Make your own timeline</a>
   </div>
 
@@ -618,16 +634,18 @@ body.readonly #personName{pointer-events:none}
 
       <div class="pane" id="pane-data" hidden>
         <div class="card" id="shareCard">
-          <h3>Share your timeline</h3>
-          <p id="shareText">Create a link anyone can open to see your timeline, eras and photos. They can look but can't change anything, and they don't need an account.</p>
-          <div class="share-url" id="shareUrlRow" hidden>
-            <input type="text" id="shareUrl" readonly aria-label="Share link">
-            <button class="btn" id="copyShare">Copy</button>
-          </div>
-          <div class="btns">
-            <button class="btn primary" id="shareToggle">Create share link</button>
-            <button class="btn sm" id="newLink" hidden title="The old link stops working">Make a new link</button>
-          </div>
+          <h3>Share this timeline</h3>
+          <p>Make a separate link for each person or group, like “Mom” or “Coaching team”. Anyone with a link can view this one timeline without an account, and you'll see which link was opened and when.</p>
+          <form class="share-url" id="newLinkForm" autocomplete="off">
+            <input type="text" id="newLinkLabel" maxlength="60" placeholder="Who is this link for? e.g. Mom" aria-label="Who is this link for?">
+            <button class="btn primary" type="submit">Create link</button>
+          </form>
+          <div class="links" id="linkList"></div>
+        </div>
+        <div class="card" id="visitCard">
+          <div class="rv-head"><h3>Who's looked</h3><button class="btn sm" id="visitRefresh">Refresh</button></div>
+          <div id="visitSummary" class="hint"></div>
+          <div class="visits" id="visitList"></div>
         </div>
         <div class="card">
           <h3>Back up your events</h3>
@@ -765,7 +783,7 @@ function erasAt(t){ return (state.eras||[]).filter(e=>t>=eraStart(e)&&t<eraEnd(e
 /* ---------- App state ---------- */
 let state = makeSample();
 let mode = "starting";          // starting | server (signed in) | signedout | shared (view-only link)
-let cloud = { uid:null }, me=null, aiOn=false, shareToken=null, tlId=null, tlList=[];
+let cloud = { uid:null }, me=null, aiOn=false, tlId=null, tlList=[], shareLinks=[];
 const sharedToken = (location.pathname.match(/^\/s\/([A-Za-z0-9_-]{10,64})\/?$/)||[])[1]||null;
 let editingId=null, visible=[], filters=new Set(CATS.map(c=>c[0]));
 let formPhotos=[], removedPhotos=[];
@@ -974,7 +992,7 @@ async function signedIn(user){
     let want=null; try{ want=localStorage.getItem("lifeline.cur:"+user.id); }catch(e){}
     const pick=tlList.find(t=>t.id===want)||tlList[0];
     if(pick) await loadTimeline(pick.id);
-    else { tlId=null; version=0; shareToken=null; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
+    else { tlId=null; version=0; shareLinks=[]; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
   }catch(e){ cloudErr="Couldn't load your timelines. Check your connection and reload."; }
   refreshStatus(); pumpUploads(); checkImport();
 }
@@ -984,7 +1002,7 @@ async function loadTimeline(id){
   if(cached){ state=docIn(cached); render(); }
   renderSwitcher();
   const t=await api(`/api/timelines/${id}`);
-  version=t.version||0; shareToken=t.share&&t.share.on?t.share.token:null;
+  version=t.version||0; shareLinks=[]; loadLinks();
   state=docIn(t.doc); lastSent=JSON.stringify(docOut()); saveLocal();
   closeDetail(); render(); renderEraList(); renderShare(); renderSwitcher(); refreshStatus();
 }
@@ -1056,7 +1074,7 @@ $("delTl").addEventListener("click",ev=>arm(ev.currentTarget,"Delete this timeli
     tlList=tlList.filter(t=>t.id!==gone);
     closeDrawer();
     if(tlList.length) await loadTimeline(tlList[0].id);
-    else { tlId=null; version=0; shareToken=null; lastSent=null; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
+    else { tlId=null; version=0; shareLinks=[]; lastSent=null; state=makeSample(); renderShare(); render(); renderEraList(); renderSwitcher(); }
     toast(`Deleted “${name}”`);
   }catch(e){ toast(e.message); }
 }));
@@ -1189,33 +1207,68 @@ function needAccount(){
 }
 
 /* ---------- Share & account ---------- */
+const fmtWhen=d=>{ if(!d) return ""; const t=new Date(d), now=new Date(), mins=Math.round((now-t)/60000);
+  if(mins<1) return "just now"; if(mins<60) return `${mins} min ago`; if(mins<24*60 && t.getDate()===now.getDate()) return `today ${t.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}`;
+  return t.toLocaleString([],{month:"short",day:"numeric",year:t.getFullYear()===now.getFullYear()?undefined:"numeric",hour:"numeric",minute:"2-digit"}); };
+const linkUrl=tok=>`${location.origin}/s/${tok}`;
+async function loadLinks(){
+  if(!tlId||mode!=="server"){ shareLinks=[]; renderShare(); return; }
+  try{ shareLinks=(await api(`/api/timelines/${tlId}/links`)).links||[]; }catch(e){ shareLinks=[]; }
+  renderShare();
+}
 function renderShare(){
-  const on=!!shareToken;
-  $("shareUrlRow").hidden=!on; $("newLink").hidden=!on;
-  $("shareToggle").textContent = on ? "Turn off share link" : "Create share link";
-  $("shareToggle").className = on ? "btn" : "btn primary";
-  if(on) $("shareUrl").value=`${location.origin}/s/${shareToken}`;
-  $("shareText").textContent = on
-    ? "Anyone with this link can see this timeline, its eras and photos. They can't change anything, can't see your other timelines, and don't need an account. Turn the link off any time."
-    : "Create a link anyone can open to see this timeline, its eras and photos. They can look but can't change anything, can't see your other timelines, and don't need an account.";
+  const l=shareLinks;
+  $("linkList").innerHTML = l.map(k=>`<div class="lk${k.active?"":" off"}" data-tok="${k.token}">
+      <b>${esc(k.label)}</b>
+      <span class="acts"><span class="pill${k.active?"":" off"}">${k.active?"On":"Off"}</span></span>
+      <div class="url"><input type="text" readonly value="${linkUrl(k.token)}" aria-label="Link for ${esc(k.label)}"><button class="btn sm" data-act="copy" type="button">Copy</button></div>
+      <div class="meta"><span>${k.views?`Opened ${k.views} time${k.views===1?"":"s"}${k.people>1?` by ${k.people} browsers`:""}`:"Not opened yet"}</span>${k.last?`<span>Last ${fmtWhen(k.last)}</span>`:""}<span>Made ${fmtWhen(k.created)}</span></div>
+      <div class="acts" style="grid-column:1/-1;justify-content:flex-start"><button class="btn sm" data-act="toggle" type="button">${k.active?"Turn off":"Turn on"}</button><button class="btn sm" data-act="rename" type="button">Rename</button><button class="btn sm danger" data-act="del" type="button">Delete</button></div>
+    </div>`).join("");
+  if(!l.length) $("linkList").innerHTML="";
+  $("visitCard").hidden=!l.length;
 }
-async function setShare(on,newLink){
-  if(state.sample) return toast("Add something of your own before sharing your timeline.");
-  try{
-    await flushCloud();
-    if(!tlId) return toast("Add something to this timeline before sharing it.");
-    const r=await api(`/api/timelines/${tlId}/share`,{method:"POST",json:{on,newLink:!!newLink}});
-    shareToken=r.on?r.token:null; renderShare();
-    toast(on?(newLink?"New link made. The old link no longer works.":"Share link created"):"Share link turned off");
-  }catch(e){ toast(e.message); }
+async function linkCall(path,opts){
+  try{ const r=await api(`/api/timelines/${tlId}/links${path}`,opts); shareLinks=r.links||shareLinks; renderShare(); return r; }
+  catch(e){ toast(e.message); }
 }
-$("shareToggle").addEventListener("click",()=>setShare(!shareToken));
-$("newLink").addEventListener("click",ev=>arm(ev.currentTarget,"Make a new link","Old link will stop working. Click again",()=>setShare(true,true)));
-$("copyShare").addEventListener("click",()=>{
-  const v=$("shareUrl").value;
-  navigator.clipboard.writeText(v).then(()=>toast("Link copied")).catch(()=>{ $("shareUrl").select(); toast("Press Ctrl+C (or Cmd+C) to copy"); });
+$("newLinkForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  if(state.sample){ toast("Add something of your own before sharing this timeline."); return; }
+  await flushCloud();
+  if(!tlId){ toast("Add something to this timeline before sharing it."); return; }
+  const label=$("newLinkLabel").value.trim()||"Everyone";
+  const r=await linkCall("",{method:"POST",json:{label}});
+  if(r){ $("newLinkLabel").value=""; syncShared(); copyText(linkUrl(r.token),`Link for ${label} created and copied`); }
 });
-$("shareBtn").addEventListener("click",()=>{ if(needAccount()) openDrawer("data"); });
+$("linkList").addEventListener("click",async e=>{
+  const b=e.target.closest("button[data-act]"); if(!b) return;
+  const row=b.closest(".lk"), tok=row.dataset.tok, k=shareLinks.find(x=>x.token===tok); if(!k) return;
+  if(b.dataset.act==="copy") return copyText(linkUrl(tok),"Link copied");
+  if(b.dataset.act==="toggle"){ await linkCall(`/${tok}`,{method:"PATCH",json:{active:!k.active}}); syncShared(); toast(k.active?`“${k.label}” link turned off`:`“${k.label}” link turned on`); }
+  if(b.dataset.act==="rename"){
+    const meta=row.querySelector("b"); const inp=document.createElement("input"); inp.type="text"; inp.value=k.label; inp.maxLength=60; inp.setAttribute("aria-label","New name");
+    meta.replaceWith(inp); inp.focus(); inp.select();
+    const done=async ok=>{ if(ok && inp.value.trim() && inp.value.trim()!==k.label) await linkCall(`/${tok}`,{method:"PATCH",json:{label:inp.value.trim()}}); else renderShare(); };
+    inp.addEventListener("keydown",ev=>{ if(ev.key==="Enter"){ ev.preventDefault(); done(true); } if(ev.key==="Escape"){ ev.stopPropagation(); done(false); } });
+    inp.addEventListener("blur",()=>done(true),{once:true});
+  }
+  if(b.dataset.act==="del") arm(b,"Delete","Click again: the link stops working",async()=>{ await linkCall(`/${tok}`,{method:"DELETE"}); syncShared(); toast(`Deleted the “${k.label}” link`); });
+});
+function syncShared(){ const t=tlList.find(x=>x.id===tlId); if(t) t.shared=shareLinks.some(k=>k.active); }
+function copyText(v,msg){ navigator.clipboard.writeText(v).then(()=>toast(msg)).catch(()=>toast(`Copy this link: ${v}`)); }
+async function loadVisits(){
+  if(!tlId||mode!=="server"||!shareLinks.length){ $("visitList").innerHTML=""; $("visitSummary").textContent=""; return; }
+  try{
+    const v=(await api(`/api/timelines/${tlId}/visits`)).visits||[];
+    $("visitSummary").textContent = v.length ? `Most recent first. Opening the same link again within 30 minutes counts as one visit. Your own visits aren't counted.` : "Nobody has opened these links yet.";
+    const ord=n=>n+(["th","st","nd","rd"][(n%100-20)%10]||["th","st","nd","rd"][n%100]||"th");
+    $("visitList").innerHTML=v.map(x=>`<div class="vs"><span><b>${esc(x.label)}</b> opened your timeline${x.views>1?` (${x.views} page loads)`:""}</span><span class="d">${esc(fmtWhen(x.last))}</span>
+      <span class="sub">${esc(x.device||"Unknown device")} · ${x.returning?`${ord(x.visitNo)} visit from this browser`:"first visit from this browser"}</span></div>`).join("");
+  }catch(e){ $("visitSummary").textContent="Couldn't load visits. Try Refresh."; }
+}
+$("visitRefresh").addEventListener("click",async()=>{ await loadLinks(); loadVisits(); });
+$("shareBtn").addEventListener("click",()=>{ if(needAccount()){ openDrawer("data"); setTimeout(()=>$("newLinkLabel").focus(),50); } });
 $("signOut").addEventListener("click",async()=>{
   await flushCloud();
   try{ await api("/api/logout",{method:"POST"}); }catch(e){}
@@ -1691,6 +1744,7 @@ function showTab(p){
   ["add","eras","sheet","fb","data"].forEach(k=>$("pane-"+k).hidden = k!==p);
   if(p==="eras") renderEraList();
   if(p==="fb"){ showResume(); updateFixCard(); }
+  if(p==="data"){ loadLinks().then(loadVisits); }
   if(p==="add") requestAnimationFrame(growAll);
 }
 

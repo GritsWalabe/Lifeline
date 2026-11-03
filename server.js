@@ -84,6 +84,36 @@ async function migrate() {
       console.log("Moved single timelines into the multi-timeline table.");
     } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
   }
+  // Share links: several per timeline (one per person or group), each with its own visit log
+  await q(`
+    CREATE TABLE IF NOT EXISTS share_links (
+      token TEXT PRIMARY KEY,
+      timeline_id TEXT NOT NULL REFERENCES tlines(id) ON DELETE CASCADE,
+      label TEXT NOT NULL DEFAULT '',
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS share_links_tl ON share_links(timeline_id);
+    CREATE TABLE IF NOT EXISTS visits (
+      id BIGSERIAL PRIMARY KEY,
+      token TEXT NOT NULL REFERENCES share_links(token) ON DELETE CASCADE,
+      vid TEXT NOT NULL,
+      first_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      device TEXT NOT NULL DEFAULT '',
+      views INT NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS visits_token ON visits(token, vid, last_at DESC);
+  `);
+  // Earlier single share links become a link named "Everyone" (once; the old column is then cleared)
+  const c2 = await pool.connect();
+  try {
+    await c2.query("BEGIN");
+    await c2.query(`INSERT INTO share_links(token,timeline_id,label,active)
+      SELECT share_token, id, 'Everyone', share_on FROM tlines WHERE share_token IS NOT NULL ON CONFLICT (token) DO NOTHING`);
+    await c2.query(`UPDATE tlines SET share_token=NULL, share_on=false WHERE share_token IS NOT NULL`);
+    await c2.query("COMMIT");
+  } catch (e) { await c2.query("ROLLBACK"); throw e; } finally { c2.release(); }
 }
 
 /* ---------- Helpers ---------- */
@@ -255,7 +285,7 @@ async function ownTimeline(req, res) {
 app.get("/api/timelines", needUser, async (req, res) => {
   const r = await q(
     `SELECT id, doc->>'name' AS name, jsonb_array_length(COALESCE(doc->'entries','[]'::jsonb)) AS count,
-            share_on, updated_at, created_at
+            EXISTS (SELECT 1 FROM share_links l WHERE l.timeline_id=tlines.id AND l.active) AS share_on, updated_at, created_at
      FROM tlines WHERE user_id=$1 ORDER BY created_at`, [req.user.id]);
   res.json({ timelines: r.rows.map((t) => ({ id: t.id, name: t.name || "", count: t.count, shared: t.share_on, updated: t.updated_at })) });
 });
@@ -359,24 +389,87 @@ app.delete("/api/photos/:id", needUser, async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Sharing (each timeline has its own link) ---------- */
-app.post("/api/timelines/:id/share", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+/* ---------- Sharing: named links per timeline, and who opened them ---------- */
+const LABEL_MAX = 60;
+async function linksFor(timelineId) {
+  const r = await q(`
+    SELECT l.token, l.label, l.active, l.created_at,
+           COUNT(v.id)::int AS views, COUNT(DISTINCT v.vid)::int AS people, MAX(v.last_at) AS last
+    FROM share_links l LEFT JOIN visits v ON v.token = l.token
+    WHERE l.timeline_id=$1 GROUP BY l.token ORDER BY l.created_at`, [timelineId]);
+  return r.rows.map((x) => ({ token: x.token, label: x.label, active: x.active, created: x.created_at, views: x.views, people: x.people, last: x.last }));
+}
+app.get("/api/timelines/:id/links", needUser, async (req, res) => {
   const t = await ownTimeline(req, res); if (!t) return;
-  const on = !!req.body?.on, fresh = !!req.body?.newLink;
-  let token = t.share_token;
-  if (on && (!token || fresh)) token = rid(12);
-  await q(`UPDATE tlines SET share_on=$2, share_token=$3 WHERE id=$1`, [t.id, on, token]);
-  res.json({ on, token: on ? token : null });
+  res.json({ links: await linksFor(t.id) });
 });
+app.post("/api/timelines/:id/links", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  const label = String(req.body?.label || "").trim().slice(0, LABEL_MAX) || "Everyone";
+  const n = await q(`SELECT count(*)::int AS n FROM share_links WHERE timeline_id=$1`, [t.id]);
+  if (n.rows[0].n >= 100) return res.status(400).json({ error: "This timeline already has 100 links. Delete some you no longer use." });
+  const token = rid(12);
+  await q(`INSERT INTO share_links(token,timeline_id,label) VALUES($1,$2,$3)`, [token, t.id, label]);
+  res.json({ links: await linksFor(t.id), token });
+});
+app.patch("/api/timelines/:id/links/:token", needUser, express.json({ limit: "10kb" }), async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  const sets = [], vals = [req.params.token, t.id];
+  if (typeof req.body?.active === "boolean") { vals.push(req.body.active); sets.push(`active=$${vals.length}`); }
+  if (typeof req.body?.label === "string") { vals.push(req.body.label.trim().slice(0, LABEL_MAX) || "Everyone"); sets.push(`label=$${vals.length}`); }
+  if (sets.length) await q(`UPDATE share_links SET ${sets.join(",")} WHERE token=$1 AND timeline_id=$2`, vals);
+  res.json({ links: await linksFor(t.id) });
+});
+app.delete("/api/timelines/:id/links/:token", needUser, async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  await q(`DELETE FROM share_links WHERE token=$1 AND timeline_id=$2`, [req.params.token, t.id]);
+  res.json({ links: await linksFor(t.id) });
+});
+app.get("/api/timelines/:id/visits", needUser, async (req, res) => {
+  const t = await ownTimeline(req, res); if (!t) return;
+  const r = await q(`
+    SELECT v.first_at, v.last_at, v.device, v.views, l.label, l.token,
+           (SELECT count(*) FROM visits p WHERE p.token=v.token AND p.vid=v.vid AND p.first_at < v.first_at)::int AS earlier
+    FROM visits v JOIN share_links l ON l.token=v.token
+    WHERE l.timeline_id=$1 ORDER BY v.last_at DESC LIMIT 200`, [t.id]);
+  res.json({ visits: r.rows.map((x) => ({ label: x.label, token: x.token, first: x.first_at, last: x.last_at, device: x.device, views: x.views, returning: x.earlier > 0, visitNo: x.earlier + 1 })) });
+});
+
+// A rough, privacy-light description of the device: no IP addresses are stored
+function describeDevice(ua) {
+  ua = String(ua || "");
+  const dev = /iPad/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone" : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android phone" : "Android tablet")
+    : /CrOS/.test(ua) ? "Chromebook" : /Windows/.test(ua) ? "Windows computer" : /Macintosh|Mac OS X/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux computer" : "Unknown device";
+  const br = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /FBAN|FBAV|FB_IAB/.test(ua) ? "Facebook app" : /Instagram/.test(ua) ? "Instagram app"
+    : /Firefox|FxiOS/.test(ua) ? "Firefox" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  return br ? `${dev} · ${br}` : dev;
+}
+const BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|embedly|preview|headless/i;
+async function recordVisit(req, res, link) {
+  if (BOT_RE.test(req.get("user-agent") || "")) return;
+  if (req.user && req.user.id === link.user_id) return; // the owner looking at their own link doesn't count
+  let vid = parseCookies(req).ll_vid;
+  if (!vid || !/^[A-Za-z0-9_-]{16,64}$/.test(vid)) {
+    vid = rid(18);
+    const secure = req.secure ? "; Secure" : "";
+    res.append("Set-Cookie", `ll_vid=${vid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${2 * 365 * 86400}${secure}`);
+  }
+  const vh = sha("v:" + vid);
+  // Opening again within 30 minutes counts as the same visit
+  const u = await q(`UPDATE visits SET last_at=now(), views=views+1 WHERE id = (
+      SELECT id FROM visits WHERE token=$1 AND vid=$2 AND last_at > now() - interval '30 minutes' ORDER BY last_at DESC LIMIT 1) RETURNING id`, [link.token, vh]);
+  if (!u.rows[0]) await q(`INSERT INTO visits(token,vid,device) VALUES($1,$2,$3)`, [link.token, vh, describeDevice(req.get("user-agent"))]);
+}
 
 async function sharedTimeline(token) {
   if (!TOKEN_RE.test(token)) return null;
-  const r = await q(`SELECT user_id, doc FROM tlines WHERE share_token=$1 AND share_on=true`, [token]);
+  const r = await q(`SELECT l.token, t.user_id, t.doc FROM share_links l JOIN tlines t ON t.id=l.timeline_id WHERE l.token=$1 AND l.active=true`, [token]);
   return r.rows[0] || null;
 }
 app.get("/api/shared/:token", async (req, res) => {
   const t = await sharedTimeline(req.params.token);
   if (!t) return res.status(404).json({ error: "This share link isn't active. Ask the owner for a new one." });
+  try { await recordVisit(req, res, t); } catch (e) { console.error("visit log", e.message); }
   const entries = (t.doc.entries || []).map(({ fbts, imp, ...e }) => e); // strip fields only the owner needs
   res.setHeader("Cache-Control", "no-store");
   res.json({ doc: { name: t.doc.name, entries, eras: t.doc.eras || [], colorNames: t.doc.colorNames || {} } });
