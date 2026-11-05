@@ -573,7 +573,7 @@ app.post("/api/fetch-image", needUser, express.json({ limit: "10kb" }), async (r
 });
 
 /* ---------- Claude review of Facebook posts ---------- */
-const REVIEW_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook posts.
+const REVIEW_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook and Instagram posts.
 For each post below, decide whether it records a real event or milestone in the poster's life that belongs on a personal life timeline.
 
 KEEP posts about things that actually happened to the poster or their close family and friends, for example: births, weddings, engagements, anniversaries, graduations, first days, new jobs, promotions, retirements, moves and new homes, trips and vacations, concerts, games, shows or festivals they attended (especially with family), reunions, achievements and awards, races or sports milestones, a new pet, a first car, a serious illness or recovery, the death of a loved one, a holiday or birthday with specific detail about what they did.

@@ -459,7 +459,7 @@ body.readonly #personName{pointer-events:none}
       <button role="tab" aria-selected="true" data-pane="add">Add event</button>
       <button role="tab" aria-selected="false" data-pane="eras">Eras</button>
       <button role="tab" aria-selected="false" data-pane="sheet">Spreadsheet</button>
-      <button role="tab" aria-selected="false" data-pane="fb">Facebook</button>
+      <button role="tab" aria-selected="false" data-pane="fb">FB / Instagram</button>
       <button role="tab" aria-selected="false" data-pane="data">Share &amp; account</button>
     </div>
     <div class="drawer-body">
@@ -565,22 +565,24 @@ body.readonly #personName{pointer-events:none}
 
       <div id="pane-fb" hidden>
         <div class="pane">
-          <h3>Import Facebook posts</h3>
+          <h3>Import Facebook or Instagram posts</h3>
           <div class="card resume" id="fbResume" hidden>
             <h3>Pick up where you left off</h3>
             <p id="resumeText"></p>
             <div class="btns"><button class="btn primary" id="resumeGo">Continue import</button><button class="btn danger" id="resumeDiscard">Discard this import</button></div>
           </div>
           <div class="card" id="fbHow">
-            <p>Facebook doesn't let apps read posts directly, so use Facebook's own download:</p>
+            <p>Facebook and Instagram don't let apps read posts directly, so use their own download. Both work the same way, through Meta's Accounts Center:</p>
             <ol class="steps">
-              <li>On Facebook, open <b>Settings → Accounts Center → Your information and permissions → Download your information</b>.</li>
-              <li>Choose the profile, then <b>Specific types of information → Posts</b>.</li>
-              <li>Set <b>Format: JSON</b>, <b>Date range: All time</b>, <b>Media quality: High</b>.</li>
-              <li>When Facebook emails you, download the .zip and drop the whole .zip below.</li>
+              <li>In Facebook or Instagram, open <b>Settings → Accounts Center → Your information and permissions → Download your information</b>.</li>
+              <li>Pick the Facebook profile or Instagram account, then choose specific information:
+                <br><b>Facebook:</b> Posts. <b>Instagram:</b> Content (posts, reels and stories).</li>
+              <li>Choose <b>Download to device</b>, and set <b>Format: JSON</b>, <b>Date range: All time</b>, <b>Media quality: High</b>.</li>
+              <li>When the email arrives, download the .zip and drop the whole .zip below. Lifeline works out whether it's from Facebook or Instagram.</li>
             </ol>
+            <p class="hint">Facebook and Instagram are separate downloads. Import one, then the other, into the same timeline if you like.</p>
           </div>
-          <label class="drop" id="fbDrop"><input type="file" id="fbFile" accept=".zip,.json" multiple><span><strong>Choose the Facebook .zip</strong> or drop it here. If Facebook split your download into several .zip files, choose them all together.</span></label>
+          <label class="drop" id="fbDrop"><input type="file" id="fbFile" accept=".zip,.json" multiple><span><strong>Choose the Facebook or Instagram .zip</strong> or drop it here. If the download came as several .zip files, choose them all together.</span></label>
           <p class="hint">The file is read in your browser. Only post text is sent to Claude for review, never photos.</p>
           <div id="fbMsg" class="hint"></div>
           <div class="card" id="fixCard" hidden>
@@ -599,6 +601,7 @@ body.readonly #personName{pointer-events:none}
             <label>To year<input type="number" id="fbTo"></label>
           </div>
           <label class="check"><input type="checkbox" id="fbPhotos" checked> Include photos</label>
+          <label class="check" id="igStoriesWrap" hidden><input type="checkbox" id="igStories"> Include Instagram stories <span class="hint" id="igStoriesN"></span></label>
           <div class="card">
             <h3>Pick out the life events</h3>
             <p id="aiIntro"></p>
@@ -1314,7 +1317,7 @@ const normColor=c=>{ const m=String(c||"").trim().match(/^#?([0-9a-f]{6})$/i); r
 function colorLabel(c){ if(!c) return "No color"; return (state.colorNames&&state.colorNames[c]) || (BOX_COLORS.find(x=>x[0]===c)||[])[1] || "Custom color"; }
 function boxStyle(e){ return e.color ? `--bx:${e.color};--bt:${textOn(e.color)};` : ""; }
 function priority(e){
-  let p = e.src==="facebook" ? 0.4+(e.imp??5)/10 : e.src==="sheet" ? 1.3 : 1.5;
+  let p = (e.src==="facebook"||e.src==="instagram") ? 0.4+(e.imp??5)/10 : e.src==="sheet" ? 1.3 : 1.5;
   if(e.photos&&e.photos.length) p+=0.3;
   if(e.cat==="milestone"||e.cat==="family") p+=0.15;
   return p;
@@ -1365,7 +1368,7 @@ function renderList(){
     if(y!==cur){ cur=y;
       const yr=+y, inEras=sortedEras().filter(er=>eraStart(er)<yr+1&&eraEnd(er)>yr);
       html+=`<div class="year"><h3>${y}</h3><span class="age">${birth&&yr>birth?`age ${yr-birth}`:""}</span>${inEras.length?`<span class="eras">${inEras.map(er=>`<span class="etag" style="${eraVars(er)}">${esc(er.name)}</span>`).join("")}</span>`:""}</div>`; }
-    const src=e.src==="facebook"?`<span class="src">From Facebook</span>`:e.src==="sheet"?`<span class="src">From spreadsheet</span>`:"";
+    const src=e.src==="facebook"?`<span class="src">From Facebook</span>`:e.src==="instagram"?`<span class="src">From Instagram</span>`:e.src==="sheet"?`<span class="src">From spreadsheet</span>`:"";
     const ph=(e.photos||[]).slice(0,6).map(p=>`<span class="sq"><img alt="" data-src="${p}"></span>`).join("");
     html+=`<button class="ev${e.color?" colored":""}${selected.has(e.id)?" sel":""}" data-id="${e.id}" style="--cc:var(--c-${e.cat});${boxStyle(e)}">
       <span class="meta"><span class="date">${fmtRange(e)}</span>${e.end?`<span>${duration(e)}</span>`:""}<span class="cat">${CAT_LABEL[e.cat]||"Other"}</span>${e.place?`<span>${esc(e.place)}</span>`:""}${src}</span>
@@ -1684,7 +1687,7 @@ function drawDetail(){
   $("dMedia").innerHTML = photos.length ? `<button class="big" id="dBig" aria-label="Open photo full screen"><img alt="${esc(e.title)}" data-src="${photos[detailPhoto]}"></button>${photos.length>1?`<div class="strip">${photos.map((p,k)=>`<button data-k="${k}" aria-current="${k===detailPhoto}" aria-label="Photo ${k+1}"><img alt="" data-src="${p}"></button>`).join("")}</div>`:""}` : "";
   hydrate($("dMedia"),null);
   const birth=birthYear(), y=+e.date.slice(0,4);
-  const src=e.src==="facebook"?"From Facebook":e.src==="sheet"?"From spreadsheet":"";
+  const src=e.src==="facebook"?"From Facebook":e.src==="instagram"?"From Instagram":e.src==="sheet"?"From spreadsheet":"";
   $("dBody").style.setProperty("--cc",`var(--c-${e.cat})`);
   $("dBody").innerHTML=`<div class="yr">${y}</div><div class="when">${fmtRange(e)}${e.end?` · ${duration(e)}`:""}${birth&&y>birth?` · age ${y-birth}`:""}</div>
     <h2 id="dTitle" style="white-space:pre-line">${esc(e.title)}</h2>
@@ -2219,6 +2222,25 @@ function findPostArray(j){
   if(j&&typeof j==="object") for(const v of Object.values(j)){ if(Array.isArray(v)&&v.some(x=>x&&x.timestamp)) return v.filter(x=>x&&x.timestamp); }
   return [];
 }
+// Instagram's download: posts_N.json, reels.json, stories.json (and media.json in very old downloads).
+// Each item is reshaped to look like a Facebook post so the rest of the import is shared.
+function igItems(name,j){
+  const base=name.split("/").pop().toLowerCase();
+  let items=[], kind="post";
+  if(/^posts_\d+\.json$/.test(base)) items=Array.isArray(j)?j:(j.ig_posts||[]);
+  else if(base==="reels.json"){ kind="reel"; items=(j.ig_reels_media||[]).length?j.ig_reels_media:(Array.isArray(j)?j:[]); }
+  else if(base==="stories.json"){ kind="story"; items=j.ig_stories||(Array.isArray(j)?j:[]); }
+  else if(base==="media.json" && j && (j.photos||j.videos)){ // downloads from before 2021
+    return [...(j.photos||[]),...(j.videos||[])].map(x=>({timestamp:Math.round(Date.parse(x.taken_at)/1000),data:x.caption?[{post:x.caption}]:[],attachments:[{data:[{media:{uri:x.path}}]}],_src:"instagram",_kind:"post"})).filter(x=>x.timestamp>0);
+  }
+  return items.map(it=>{
+    const media=Array.isArray(it.media)?it.media:[it];
+    const ts=it.creation_timestamp||(media[0]&&media[0].creation_timestamp)||0;
+    const cap=it.title||(media.find(m=>m&&m.title)||{}).title||"";
+    return {timestamp:ts,data:cap?[{post:cap}]:[],attachments:[{data:media.filter(m=>m&&m.uri).map(m=>({media:{uri:m.uri}}))}],_src:"instagram",_kind:kind};
+  }).filter(x=>x.timestamp>0);
+}
+const IG_FILE=/(^|\/)(posts_\d+|reels|stories|media)\.json$/i;
 function fbToEntry(p){
   const d=new Date(p.timestamp*1000), date=mk(d.getFullYear(),d.getMonth()+1,d.getDate());
   let text=""; (p.data||[]).forEach(x=>{ if(x.post) text=fixFb(x.post); });
@@ -2229,8 +2251,10 @@ function fbToEntry(p){
     if(x.external_context&&x.external_context.url) link=x.external_context.url;
   }));
   const label=fixFb(p.title||""), body=text||mediaDesc, firstLine=body.split(/\n/)[0], long=firstLine.length>90;
-  const title = body ? (long ? firstLine.slice(0,87).trimEnd()+"…" : firstLine) : (label || (imgs.length ? `Shared ${imgs.length} photo${imgs.length>1?"s":""}` : "Facebook post"));
-  return {date,title,body,label,link,place,imgs,videos,fbts:p.timestamp,hasContent:!!body||imgs.length>0};
+  const ig=p._src==="instagram", kind=p._kind||"post";
+  const fallback = kind==="story" ? "Instagram story" : kind==="reel" ? "Instagram reel" : imgs.length ? `Shared ${imgs.length} photo${imgs.length>1?"s":""}` : ig ? "Instagram post" : "Facebook post";
+  const title = body ? (long ? firstLine.slice(0,87).trimEnd()+"…" : firstLine) : (label || fallback);
+  return {date,title,body,label,link,place,imgs,videos,fbts:p.timestamp,src:ig?"instagram":"facebook",kind,hasContent:!!body||imgs.length>0||videos>0&&ig};
 }
 function addZips(zips){ zips.forEach(z=>{ if(!fbZips.includes(z)) fbZips.push(z); }); buildIndex(); }
 function buildIndex(){
@@ -2253,14 +2277,21 @@ async function readFbFiles(files){
       const zip=await JSZip.loadAsync(f); zips.push(zip);
       const names=Object.keys(zip.files).filter(n=>/\.json$/i.test(n)&&/posts\//i.test(n)&&!/album|comment|other_people|edits|archive/i.test(n));
       for(const n of names){ try{ raw.push(...findPostArray(JSON.parse(await zip.files[n].async("string")))); postFiles++; }catch(e){} }
-    } else if(/\.json$/i.test(f.name)){ raw.push(...findPostArray(JSON.parse(await f.text()))); postFiles++; }
+      // Instagram files (skip archived, deleted and other people's content)
+      const ig=Object.keys(zip.files).filter(n=>IG_FILE.test(n)&&!/archived|deleted|other_people|saved|liked|comment/i.test(n)&&!names.includes(n));
+      for(const n of ig){ try{ const got=igItems(n,JSON.parse(await zip.files[n].async("string"))); if(got.length){ raw.push(...got); postFiles++; } }catch(e){} }
+    } else if(/\.json$/i.test(f.name)){
+      const j=JSON.parse(await f.text()), got=IG_FILE.test(f.name)?igItems(f.name,j):[];
+      raw.push(...(got.length?got:findPostArray(j))); postFiles++;
+    }
   }
-  const out=raw.filter(p=>{ const k=p.timestamp+"|"+JSON.stringify(p.data||"").slice(0,80); if(seen.has(k)) return false; seen.add(k); return true; });
+  const out=raw.filter(p=>{ const k=p.timestamp+"|"+(p._kind||"")+"|"+JSON.stringify(p.data||"").slice(0,80); if(seen.has(k)) return false; seen.add(k); return true; });
   return {raw:out, zips, postFiles};
 }
 function fbMsg(t,err){ $("fbMsg").innerHTML = err ? `<span class="msg err" style="display:block">${esc(t)}</span>` : esc(t); }
 function onTimeline(){ return new Set(state.entries.filter(e=>e.fbts).map(e=>e.fbts)); }
-function candidates(){ const from=+$("fbFrom").value||0, to=+$("fbTo").value||9999; return fbPosts.filter(e=>{ const y=+e.date.slice(0,4); return y>=from&&y<=to; }); }
+function candidates(){ const from=+$("fbFrom").value||0, to=+$("fbTo").value||9999, stories=$("igStories").checked; return fbPosts.filter(e=>{ const y=+e.date.slice(0,4); return y>=from&&y<=to&&(stories||e.kind!=="story"); }); }
+function showStoryOption(){ const n=fbPosts.filter(e=>e.kind==="story").length; $("igStoriesWrap").hidden=!n; $("igStoriesN").textContent=n?`(${n} stories; usually everyday moments, so they're left out unless you tick this)`:""; }
 function needsClaude(){ return fbCands.filter(e=>{ const r=review.get(e.fbts); return !r||r.by!=="ai"; }); }
 function clearReviewUI(){ $("fbReview").hidden=true; $("fbFoot").hidden=true; $("aiProg").hidden=true; }
 
@@ -2314,7 +2345,7 @@ function restoreImport(){
   review=new Map(s.review||[]);
   impInfo={fileName:s.fileName, startedAt:s.startedAt, hadZip:s.hadZip, added:s.added||0, addedPhotos:s.addedPhotos||0};
   $("fbFrom").value=s.from||""; $("fbTo").value=s.to||"";
-  $("fbSetup").hidden=false; $("fbHow").hidden=true;
+  $("fbSetup").hidden=false; $("fbHow").hidden=true; showStoryOption();
   $("fbPhotos").closest("label").hidden=!fbZip;
   showResume();
   if(fbCands.length) renderReview();
@@ -2378,12 +2409,14 @@ wireDropMulti("fbDrop","fbFile",async files=>{
     $("fbPhotos").closest("label").hidden=!fbZip;
     const nPh=fbPosts.reduce((n,e)=>n+e.imgs.length,0);
     const unfound=fbZips.length?fbPosts.reduce((n,e)=>n+e.imgs.filter(u=>!zipFind(u)).length,0):0;
-    fbMsg(`Found ${fbPosts.length} posts${nPh?` with ${nPh} photos`:""}${unfound?`. ${unfound} of the photos aren't in ${zips.length>1?"these files":"this file"}; if Facebook split your download into several .zip files, drop all of them together`:""}${already?` (${already} already on your timeline were left out)`:""}.${!fbZip&&nPh?" Drop the full .zip to bring photos in.":""} Your progress is saved as you go, so you can stop and come back any time.`);
-    $("fbSetup").hidden=false; $("fbHow").hidden=true;
+    const nIg=fbPosts.filter(e=>e.src==="instagram").length, nFb=fbPosts.length-nIg;
+    const which = nIg&&nFb ? `${nFb} Facebook and ${nIg} Instagram items` : nIg ? `${nIg} Instagram items (${["post","reel","story"].map(k=>{ const c=fbPosts.filter(e=>e.kind===k).length; return c?`${c} ${k==="story"?(c>1?"stories":"story"):k+(c>1?"s":"")}`:""; }).filter(Boolean).join(", ")})` : `${nFb} posts`;
+    fbMsg(`Found ${which}${nPh?` with ${nPh} photos`:""}${unfound?`. ${unfound} of the photos aren't in ${zips.length>1?"these files":"this file"}; if the download came as several .zip files, drop all of them together`:""}${already?` (${already} already on your timeline were left out)`:""}.${!fbZip&&nPh?" Drop the full .zip to bring photos in.":""} Your progress is saved as you go, so you can stop and come back any time.`);
+    $("fbSetup").hidden=false; $("fbHow").hidden=true; showStoryOption();
     saveImport(); showResume();
   }catch(err){ fbMsg("That file couldn't be read. Drop the .zip from Facebook or a .json file from inside it.",true); }
 });
-["fbFrom","fbTo"].forEach(i=>$(i).addEventListener("change",()=>{
+["fbFrom","fbTo","igStories"].forEach(i=>$(i).addEventListener("change",()=>{
   if(!fbPosts.length) return;
   if(review.size){ fbCands=candidates(); renderReview(); const left=needsClaude().length; if(left&&aiOn&&fbCands.some(e=>review.get(e.fbts)?.by==="ai")){ $("aiProg").hidden=false; $("aiMore").hidden=false; progressAI(`${left} posts in this range haven't been reviewed by Claude yet. Press Continue to review them.`); } }
   saveImportSoon();
@@ -2392,7 +2425,7 @@ wireDropMulti("fbDrop","fbFile",async files=>{
 /* ---------- Facebook: find missing photos for posts already on the timeline ---------- */
 let fixPlan=null, fixStopReq=false, fixBusy=false;
 let textOnlyTs=(()=>{ try{ return new Set(JSON.parse(localStorage.getItem("lifeline.textonly"))||[]); }catch(e){ return new Set(); } })();
-function fbNoPhoto(){ return state.entries.filter(e=>e.src==="facebook"&&e.fbts&&!(e.photos&&e.photos.length)&&!textOnlyTs.has(e.fbts)); }
+function fbNoPhoto(){ return state.entries.filter(e=>(e.src==="facebook"||e.src==="instagram")&&e.fbts&&!(e.photos&&e.photos.length)&&!textOnlyTs.has(e.fbts)); }
 function updateFixCard(){
   const n=fbNoPhoto().length;
   $("fixCard").hidden=!n && !fixBusy;
@@ -2463,7 +2496,7 @@ function updateAiAvailability(){
     ? "Claude reads each post and suggests the ones that record something that happened in your life (a concert with your son, a move, a new job) and leaves out the rest (a favorite song, a meme, a news link). You review the suggestions before anything is added."
     : "Claude review isn't available here, so use the quick keyword check. It looks for words like wedding, graduated, new job, moved, concert and trip. You review the results before anything is added.";
 }
-const AI_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook posts.
+const AI_PROMPT = `You are helping someone build a timeline of their own life from their old Facebook and Instagram posts.
 For each post below, decide whether it records a real event or milestone in the poster's life that belongs on a personal life timeline.
 
 KEEP posts about things that actually happened to the poster or their close family and friends, for example: births, weddings, engagements, anniversaries, graduations, first days, new jobs, promotions, retirements, moves and new homes, trips and vacations, concerts, games, shows or festivals they attended (especially with family), reunions, achievements and awards, races or sports milestones, a new pet, a first car, a serious illness or recovery, the death of a loved one, a holiday or birthday with specific detail about what they did.
@@ -2626,7 +2659,7 @@ async function addSelected(){
       done++;
     }
     const desc=[e.body&&e.body!==r.title?e.body:"", e.link].filter(Boolean).join("\n");
-    chunk.push({date:e.date,title:r.title,desc,cat:r.cat,place:e.place,src:"facebook",fbts:e.fbts,photos,videos:e.videos||undefined,imp:r.score||undefined});
+    chunk.push({date:e.date,title:r.title,desc,cat:r.cat,place:e.place,src:e.src||"facebook",fbts:e.fbts,photos,videos:e.videos||undefined,imp:r.score||undefined});
     posts++;
     bar.firstElementChild.style.width=(100*(total?done/total:posts/sel.length))+"%";
     $("fbFootMsg").textContent=`Adding ${posts} of ${sel.length} posts${total?`, ${done} of ${total} photos`:""}`;
