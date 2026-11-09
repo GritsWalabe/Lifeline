@@ -310,7 +310,7 @@ img{max-width:100%}
 #auth{padding:16px;overflow:auto}
 .share-url{display:flex;gap:6px}
 .share-url input{flex:1;min-width:0;font-family:var(--f-mono);font-size:13px}
-body.readonly #selBtn, body.readonly #selBar, body.readonly #tlWrap, body.readonly #dMove, body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
+body.readonly #nameColorsChip, body.readonly #selBtn, body.readonly #selBar, body.readonly #tlWrap, body.readonly #dMove, body.readonly #openDrawer, body.readonly #shareBtn, body.readonly #addEraChip, body.readonly .sheet-foot, body.readonly #sampleBanner, body.readonly #importBanner{display:none!important}
 body.readonly #personName{pointer-events:none}
 .tl-wrap{position:relative;align-self:flex-start}
 .tl-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px 3px 12px;cursor:pointer;font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
@@ -342,6 +342,10 @@ body.readonly #personName{pointer-events:none}
 .vs b{font-weight:600}
 .vs .d{font-family:var(--f-mono);font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
 .vs .sub{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.crow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center}
+.crow input[type=color]{width:44px;height:38px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);cursor:pointer}
+.crow input[type=text]{text-transform:none;letter-spacing:0;font-weight:400}
+.crow .n{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
 .foot{padding-block:24px 40px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
 .foot a{color:var(--muted)}
 .hint a,.auth-card a{color:var(--accent)}
@@ -708,6 +712,15 @@ body.readonly #personName{pointer-events:none}
     <p id="authSwitchText">Already have an account? <button type="button" class="auth-switch" id="authSwitch">Sign in</button></p>
     <button type="button" class="btn" id="authLater">Look around the example first</button>
     <p class="hint"><a href="/privacy" target="_blank" rel="noopener">How Lifeline handles your data</a></p>
+  </form>
+</div>
+
+<div class="back" id="colorDlg" hidden>
+  <form class="auth-card" id="colorForm" role="dialog" aria-modal="true" aria-labelledby="colorDlgTitle" autocomplete="off" style="width:min(520px,100%)">
+    <h2 id="colorDlgTitle">Name your colors</h2>
+    <p>Give each color group a name. The name shows in the filter row, on events and on shared links. You can also change a group's color, and every event in it changes too.</p>
+    <div id="colorRows" class="stack" style="gap:10px"></div>
+    <div class="btns"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="colorCancel">Cancel</button></div>
   </form>
 </div>
 
@@ -1339,7 +1352,8 @@ function render(){
   const used=Object.keys(cc).filter(Boolean).sort((a,b)=>{ const ia=BOX_COLORS.findIndex(x=>x[0]===a), ib=BOX_COLORS.findIndex(x=>x[0]===b); return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b); });
   if(used.length){
     const keys=cc[""]?[...used,""]:used;
-    $("chips").insertAdjacentHTML("afterbegin", keys.map(k=>`<button class="chip color${k?"":" none"}" data-color="${k}" aria-pressed="${!hiddenColors.has(k)}" style="--cc:${k||"transparent"}" title="Click to hide or show. Double-click to show only this color."><i></i>${esc(colorLabel(k))}<span class="n">${cc[k]}</span></button>`).join("")+`<span class="chip-sep"></span>`);
+    $("chips").insertAdjacentHTML("afterbegin", keys.map(k=>`<button class="chip color${k?"":" none"}" data-color="${k}" aria-pressed="${!hiddenColors.has(k)}" style="--cc:${k||"transparent"}" title="Click to hide or show. Double-click to show only this color."><i></i>${esc(colorLabel(k))}<span class="n">${cc[k]}</span></button>`).join("")
+      + `<button class="chip" id="nameColorsChip" title="Name or change your color groups">✎ Name colors</button><span class="chip-sep"></span>`);
   }
   if(hiddenColors.size || filters.size<CATS.length) $("chips").insertAdjacentHTML("beforeend",`<button class="chip reset" id="showAllChip">Show everything</button>`);
   const q = $("search").value.trim().toLowerCase();
@@ -1569,6 +1583,41 @@ wrapEl.addEventListener("click",e=>{
   const t=e.target.closest(".tc,.dot"); if(!t) return;
   if(selMode) toggleSel(t.dataset.id); else openDetail(t.dataset.id);
 });
+/* ---------- Name or recolor color groups ---------- */
+function openColorDlg(){
+  if(mode==="shared") return;
+  const cc={}; state.entries.forEach(e=>{ if(e.color) cc[e.color]=(cc[e.color]||0)+1; });
+  const cols=Object.keys(cc).sort((a,b)=>cc[b]-cc[a]);
+  if(!cols.length){ toast("No events have a color yet."); return; }
+  $("colorRows").innerHTML=cols.map((c,i)=>`<div class="crow" data-c="${c}">
+      <input type="color" value="${c}" aria-label="Color for group ${i+1}">
+      <input type="text" maxlength="60" value="${esc((state.colorNames||{})[c]||"")}" placeholder="${esc(colorLabel(c))}" aria-label="Name for this color">
+      <span class="n">${cc[c]} event${cc[c]===1?"":"s"}</span></div>`).join("");
+  $("colorDlg").hidden=false; lock();
+  setTimeout(()=>{ const f=$("colorRows").querySelector('input[type=text]'); if(f){ f.focus(); f.select(); } },30);
+}
+function closeColorDlg(){ $("colorDlg").hidden=true; unlockIfClear(); }
+$("colorCancel").addEventListener("click",closeColorDlg);
+$("colorDlg").addEventListener("click",e=>{ if(e.target===$("colorDlg")) closeColorDlg(); });
+$("colorDlg").addEventListener("keydown",e=>{ if(e.key==="Escape"){ e.stopPropagation(); closeColorDlg(); } });
+$("colorForm").addEventListener("submit",e=>{
+  e.preventDefault();
+  if(!state.colorNames) state.colorNames={};
+  const names={...state.colorNames}, remap={};
+  $("colorRows").querySelectorAll(".crow").forEach(r=>{
+    const old=r.dataset.c, now=normColor(r.querySelector('input[type=color]').value)||old, nm=r.querySelector('input[type=text]').value.trim();
+    if(now!==old){ remap[old]=now; delete names[old]; }
+    if(nm) names[now]=nm; else delete names[now];
+  });
+  if(Object.keys(remap).length){
+    state.entries.forEach(ev=>{ if(ev.color && remap[ev.color]) ev.color=remap[ev.color]; });
+    hiddenColors=new Set([...hiddenColors].map(k=>remap[k]||k));
+  }
+  state.colorNames=names;
+  save(); render(); renderFSwatches(); closeColorDlg();
+  toast("Color names saved");
+});
+
 /* ---------- Select several events ---------- */
 let selMode=false; const selected=new Set();
 function setSelMode(on){
@@ -1673,7 +1722,7 @@ function updateOvWin(){
 /* ---------- Detail sheet ---------- */
 let detailId=null, detailPhoto=0;
 function lock(){ document.body.classList.add("locked"); }
-function unlockIfClear(){ if($("detail").hidden&&$("drawer").hidden&&$("lb").hidden&&$("auth").hidden&&$("newTl").hidden) document.body.classList.remove("locked"); }
+function unlockIfClear(){ if($("detail").hidden&&$("drawer").hidden&&$("lb").hidden&&$("auth").hidden&&$("newTl").hidden&&$("colorDlg").hidden) document.body.classList.remove("locked"); }
 function openDetail(id){ detailId=id; detailPhoto=0; $("detail").hidden=false; lock(); drawDetail(); $("dClose").focus(); }
 function closeDetail(){ $("detail").hidden=true; detailId=null; armReset($("dDel"),"Delete"); unlockIfClear(); }
 function drawDetail(){
@@ -1961,6 +2010,7 @@ $("fCancel").addEventListener("click",endEdit);
 /* ---------- Toolbar ---------- */
 $("chips").addEventListener("click",ev=>{ const c=ev.target.closest(".chip"); if(!c) return;
   if(c.id==="addEraChip"){ openDrawer("eras"); $("eName").focus(); return; }
+  if(c.id==="nameColorsChip"){ openColorDlg(); return; }
   if(c.id==="showAllChip"){ hiddenColors.clear(); filters=new Set(CATS.map(x=>x[0])); render(); return; }
   const key=c.dataset.color!==undefined?"c:"+c.dataset.color:c.dataset.cat?"k:"+c.dataset.cat:"";
   const quick=key && chipClick.key===key && Date.now()-chipClick.t<450; chipClick={key,t:Date.now()};
@@ -2117,8 +2167,17 @@ function renderScSwatches(){
   $("scSwatches").innerHTML = `<button type="button" class="sw none" data-c="" aria-pressed="${!sheetAll.color}" aria-label="No color" title="No color"></button>` + BOX_COLORS.map(([c,n])=>`<button type="button" class="sw" data-c="${c}" style="--sc:${c}" aria-pressed="${c===sheetAll.color}" aria-label="${n}" title="${esc(colorLabel(c))}"></button>`).join("")
     + `<input type="color" id="scCustom" value="${sheetAll.color||"#FDE68A"}" aria-label="Pick any color" title="Pick any color"${sheetAll.color&&!BOX_COLORS.some(x=>x[0]===sheetAll.color)?' style="outline:2px solid var(--ink);outline-offset:1px"':""}>`;
 }
-$("scSwatches").addEventListener("click",e=>{ const b=e.target.closest(".sw"); if(b){ sheetAll.color=b.dataset.c; sheetAll.useFile=false; $("scName").value=(state.colorNames&&state.colorNames[sheetAll.color])||""; renderSheet(); } });
-$("scSwatches").addEventListener("change",e=>{ if(e.target.id==="scCustom"){ sheetAll.color=normColor(e.target.value); sheetAll.useFile=false; $("scName").value=(state.colorNames&&state.colorNames[sheetAll.color])||""; renderSheet(); } });
+// Picking a color fills the group name with the color's existing name, or else the file's name
+const fileGroupName=()=>String(sheet.fileName||"").replace(/\.[^.]+$/,"").replace(/[_]+/g," ").trim().slice(0,60);
+function pickSheetColor(c){
+  const prevAuto=$("scName").dataset.auto==="1"||!$("scName").value.trim();
+  sheetAll.color=c; sheetAll.useFile=false;
+  if(prevAuto){ $("scName").value=c?((state.colorNames&&state.colorNames[c])||fileGroupName()):""; $("scName").dataset.auto="1"; }
+  renderSheet();
+}
+$("scSwatches").addEventListener("click",e=>{ const b=e.target.closest(".sw"); if(b) pickSheetColor(b.dataset.c); });
+$("scSwatches").addEventListener("change",e=>{ if(e.target.id==="scCustom") pickSheetColor(normColor(e.target.value)); });
+$("scName").addEventListener("input",()=>{ $("scName").dataset.auto=""; });
 $("scName").addEventListener("input",()=>renderSheet());
 $("scFile").addEventListener("change",e=>{ sheetAll.useFile=e.target.checked; renderSheet(); });
 $("sheetImport").addEventListener("click",()=>{
@@ -2207,7 +2266,8 @@ wireDrop("sheetDrop","sheetFile",async f=>{
       if(best>=0 && bestN>=Math.max(1,sheet.rows.length*0.2)){ sheet.map.photos=best; used.add(best); }
     }
     if(sheet.map.title==null){ const i=sheet.headers.findIndex((h,i)=>!used.has(i)&&i!==sheet.map.date); if(i>=0) sheet.map.title=i; }
-    sheetAll={color:"",useFile:sheet.map.color!=null}; $("scName").value="";
+    sheet.fileName=f.name;
+    sheetAll={color:"",useFile:sheet.map.color!=null}; $("scName").value=""; $("scName").dataset.auto="1";
     $("sheetResult").hidden=false; renderSheet();
   }catch(err){ $("sheetResult").hidden=false; $("sheetMap").innerHTML=""; $("sheetPreview").innerHTML=""; $("sheetImport").disabled=true; $("sheetMsg").innerHTML=`<span class="msg err" style="display:block">${esc(err.message)}</span>`; }
 });
